@@ -18,3 +18,19 @@ always seen those eye candy compositors and they always uses C/++ and im decided
 **Current project status:**
 - zwm are very young expect many issues and bugs
 - if you willing contribute submit pull request explain what enchanced
+
+# Building and testing
+
+*requirements:*
+- zig 0.14.1+ you probably would get it from https://ziglang.org/download/
+- pkg-config
+- make
+- wlroots 0.18
+
+*build:*
+```
+git clone https://codeberg.org/blx/zwm
+cd zwm
+make build
+sudo make install # optional if you want install zwm to path
+```
