@@ -14,3 +14,7 @@ always seen those eye candy compositors and they always uses C/++ and im decided
 - Blur 
 - Window Rounding
 - Custom renderer for FX effects
+
+**Current project status:**
+- zwm are very young expect many issues and bugs
+- if you willing contribute submit pull request explain what enchanced
