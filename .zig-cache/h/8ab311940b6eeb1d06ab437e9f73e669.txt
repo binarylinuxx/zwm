@@ -1,0 +1,8 @@
+0
+4843576 23383700 1761059874581042830 e4bc9337726dde1b13c36f2da18a7b85 1 .zig-cache/o/dc2de320ea1dcba43f2c3c52f88d9c86/zig-wayland-scanner
+151930 18788920 1754945688000000000 c397af4e05b9e4b199f2394d528858e9 0 /usr/share/wayland/wayland.xml
+62697 593302 1746988518000000000 79152424f363df283a9ca5743c58ad74 0 /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml
+7283 593214 1746988518000000000 951306b0f3b2a085fafe14573718ed41 0 /usr/share/wayland-protocols/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml
+56205 593306 1746988518000000000 b28ac788eaeb196f9e811ff88d118099 0 /usr/share/wayland-protocols/stable/tablet/tablet-v2.xml
+19326 23400425 1761067377966670875 c0fc98fc303035577294bba4108422f7 1 protocols/wlr-layer-shell-unstable-v1.xml
+10304 23430022 1761140758588870200 4702355cb24cda2ee06ec2d336c20dc3 1 protocols/wlr-screencopy-unstable-v1.xml

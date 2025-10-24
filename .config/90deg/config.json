@@ -1,0 +1,9 @@
+{
+    "barFloat": true,
+    "barSide": true,
+    "dynamicWorkspaces": false,
+    "matugenMode": "dark",
+    "matugenScheme": "scheme-content",
+    "screenCorners": true,
+    "workspaceCount": 10
+}
