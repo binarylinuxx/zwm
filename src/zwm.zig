@@ -3,6 +3,7 @@ const posix = std.posix;
 const mem = std.mem;
 
 const wl = @import("wayland").server.wl;
+const zwlr = @import("wayland").server.zwlr;
 
 const wlr = @import("wlroots");
 const xkb = @import("xkbcommon");
@@ -294,6 +295,8 @@ const Server = struct {
     // Animation management
     animations: wl.list.Head(Animation, .link) = undefined,
     animation_timer: *wl.EventSource = undefined,
+    
+
 
     fn init(server: *Server) !void {
         const wl_server = try wl.Server.create();
@@ -417,94 +420,91 @@ const Server = struct {
     }
 
     fn arrangeWindows(server: *Server) void {
-        std.log.info("arrangeWindows called: {} toplevels", .{server.toplevels.length()});
-        const count = server.toplevels.length();
+        var output_it = server.output_layout.outputs.iterator(.forward);
+        while (output_it.next()) |layout_output| {
+            const output = @as(*Output, @ptrFromInt(layout_output.output.data));
+            server.calculateReservedAreaForOutput(output);
 
-        if (count == 0) return;
+            var box: wlr.Box = undefined;
+            server.output_layout.getBox(layout_output.output, &box);
 
-        // Get the usable area from the first output
-        var box: wlr.Box = undefined;
-        server.output_layout.getBox(null, &box);
+            const usable_x = box.x + output.reserved_area_left + server.gap_size;
+            const usable_y = box.y + output.reserved_area_top + server.gap_size;
+            const usable_width = box.width - output.reserved_area_left - output.reserved_area_right - (server.gap_size * 2);
+            const usable_height = box.height - output.reserved_area_top - output.reserved_area_bottom - (server.gap_size * 2);
 
-        _ = server.border_width;
-        const usable_width = box.width - (server.gap_size * 2);
-        const usable_height = box.height - (server.gap_size * 2);
+            var toplevels_on_output = std.ArrayList(*Toplevel).init(gpa);
+            defer toplevels_on_output.deinit();
 
-        if (count == 1) {
-            // Single window takes full screen with gaps
-            var it = server.toplevels.iterator(.forward);
-            if (it.next()) |toplevel| {
-                const x = box.x + server.gap_size;
-                const y = box.y + server.gap_size;
+            var toplevel_it = server.toplevels.iterator(.forward);
+            while (toplevel_it.next()) |toplevel| {
+                var toplevel_geometry: wlr.Box = undefined;
+                toplevel.xdg_toplevel.base.getGeometry(&toplevel_geometry);
+
+                const center_x = toplevel.x + @divTrunc(toplevel_geometry.width, 2);
+                const center_y = toplevel.y + @divTrunc(toplevel_geometry.height, 2);
+
+                if (server.output_layout.outputAt(@floatFromInt(center_x), @floatFromInt(center_y)) == output.wlr_output) {
+                    toplevels_on_output.append(toplevel) catch |err| {
+                        std.log.err("failed to append toplevel to list: {}", .{err});
+                    };
+                }
+            }
+
+            const count = toplevels_on_output.items.len;
+            if (count == 0) continue;
+
+            if (count == 1) {
+                const toplevel = toplevels_on_output.items[0];
+                const x = usable_x;
+                const y = usable_y;
                 const w = usable_width;
                 const h = usable_height;
-
-                std.log.info("Single window: animating to position x={}, y={}, size w={}, h={}", .{x, y, w, h});
                 server.startAnimation(toplevel, x, y, w, h);
-                
-                // Set this as the master window if not already set
-                if (server.master_toplevel == null) {
-                    server.master_toplevel = toplevel;
-                }
-            }
-        } else {
-            // Master-stack layout
-            const master_width = @as(i32, @intFromFloat(@as(f32, @floatFromInt(usable_width)) * server.master_ratio)) - server.gap_size;
-            const stack_width = usable_width - master_width - server.gap_size;
-            
-            // Determine master window: use the explicitly set master if available, otherwise first in list
-            var master: ?*Toplevel = null;
-            var stack_count: usize = 0;
-            
-            // Count all windows that are not the master
-            var it = server.toplevels.iterator(.forward);
-            while (it.next()) |toplevel| {
-                if (server.master_toplevel != null and toplevel == server.master_toplevel.?) {
-                    master = toplevel;
-                } else {
-                    stack_count += 1;
-                }
-            }
-            
-            // If no master is set, use the first window as master and set it
-            if (master == null) {
-                var it2 = server.toplevels.iterator(.forward);
-                if (it2.next()) |first_toplevel| {
-                    master = first_toplevel;
-                    server.master_toplevel = first_toplevel;
-                }
-            }
-            
-            const stack_height = @divTrunc(usable_height, @as(i32, @intCast(stack_count)));
+            } else {
+                const master_width = @as(i32, @intFromFloat(@as(f32, @floatFromInt(usable_width)) * server.master_ratio)) - server.gap_size;
+                const stack_width = usable_width - master_width - server.gap_size;
 
-            // Position master window
-            if (master) |master_window| {
-                const x = box.x + server.gap_size;
-                const y = box.y + server.gap_size;
-
-                std.log.info("Master window: animating to position x={}, y={}, size w={}, h={}", .{x, y, master_width, usable_height});
-                server.startAnimation(master_window, x, y, master_width, usable_height);
-            }
-
-            // Position stack windows
-            var stack_idx: usize = 0;
-            var it3 = server.toplevels.iterator(.forward);
-            while (it3.next()) |toplevel| {
-                // Skip the master window
-                if (server.master_toplevel != null and toplevel == server.master_toplevel.?) {
-                    continue;
+                var master: ?*Toplevel = null;
+                if (server.master_toplevel) |m| {
+                    for (toplevels_on_output.items) |t| {
+                        if (t == m) {
+                            master = m;
+                            break;
+                        }
+                    }
                 }
-                
-                const x = box.x + server.gap_size + master_width + server.gap_size;
-                const y = box.y + server.gap_size + @as(i32, @intCast(stack_idx)) * stack_height;
-                const h = if (stack_idx == stack_count - 1)
-                    usable_height - @as(i32, @intCast(stack_idx)) * stack_height
-                else
-                    stack_height - server.gap_size;
 
-                std.log.info("Stack window {}: animating to position x={}, y={}, size w={}, h={}", .{stack_idx, x, y, stack_width, h});
-                server.startAnimation(toplevel, x, y, stack_width, h);
-                stack_idx += 1;
+                if (master == null) {
+                    master = toplevels_on_output.items[0];
+                    server.master_toplevel = master;
+                }
+
+                const stack_count = count - 1;
+                const stack_height = if (stack_count > 0) @divTrunc(usable_height, @as(i32, @intCast(stack_count))) else 0;
+
+                if (master) |master_window| {
+                    const x = usable_x;
+                    const y = usable_y;
+                    server.startAnimation(master_window, x, y, master_width, usable_height);
+                }
+
+                var stack_idx: usize = 0;
+                for (toplevels_on_output.items) |toplevel| {
+                    if (master != null and toplevel == master.?) {
+                        continue;
+                    }
+
+                    const x = usable_x + master_width + server.gap_size;
+                    const y = usable_y + @as(i32, @intCast(stack_idx)) * stack_height;
+                    const h = if (stack_idx == stack_count - 1)
+                        usable_height - @as(i32, @intCast(stack_idx)) * stack_height
+                    else
+                        stack_height - server.gap_size;
+
+                    server.startAnimation(toplevel, x, y, stack_width, h);
+                    stack_idx += 1;
+                }
             }
         }
     }
@@ -932,6 +932,67 @@ const Server = struct {
         server.seat.pointerNotifyFrame();
     }
 
+    fn calculateReservedAreaForOutput(server: *Server, output: *Output) void {
+        // Reset reserved areas
+        output.reserved_area_top = 0;
+        output.reserved_area_right = 0;
+        output.reserved_area_bottom = 0;
+        output.reserved_area_left = 0;
+        
+        // Iterate through all layer surfaces to calculate their exclusive zones
+        var it = server.layer_surfaces.iterator(.forward);
+        while (it.next()) |layer_surface| {
+            // Only consider surfaces that have an exclusive zone and belong to the specified output
+            if (!layer_surface.exclusive_zone.hasExclusiveZone()) {
+                continue;
+            }
+            
+            // Check if this layer surface belongs to the specified output
+            if (layer_surface.layer_surface.output != output.wlr_output) {
+                continue;
+            }
+            
+            const anchor = layer_surface.exclusive_zone.anchor;
+            const effective_zone = layer_surface.exclusive_zone.getEffectiveZone();
+            
+            // Only consider surfaces that are anchored to an edge and have a positive exclusive zone
+            if (effective_zone <= 0) {
+                continue;
+            }
+            
+            // Check anchor points to determine which edge the exclusive zone applies to
+            const anchor_top = @as(u32, @bitCast(zwlr.LayerSurfaceV1.Anchor{ .top = true }));
+            const anchor_bottom = @as(u32, @bitCast(zwlr.LayerSurfaceV1.Anchor{ .bottom = true }));
+            const anchor_left = @as(u32, @bitCast(zwlr.LayerSurfaceV1.Anchor{ .left = true }));
+            const anchor_right = @as(u32, @bitCast(zwlr.LayerSurfaceV1.Anchor{ .right = true }));
+            
+            // Only apply exclusive zones for surfaces that are anchored to a single edge
+            // If a surface is anchored to both left and right (or top and bottom), 
+            // it spans the entire dimension and shouldn't reserve exclusive space that affects layout
+            const is_anchored_horizontally = ((anchor & anchor_left) != 0) and ((anchor & anchor_right) != 0);
+            const is_anchored_vertically = ((anchor & anchor_top) != 0) and ((anchor & anchor_bottom) != 0);
+            
+            // Apply exclusive zone only if the surface is not spanning the full dimension
+            if (!is_anchored_horizontally) {
+                if ((anchor & anchor_left) != 0) {
+                    output.reserved_area_left = @max(output.reserved_area_left, effective_zone);
+                }
+                if ((anchor & anchor_right) != 0) {
+                    output.reserved_area_right = @max(output.reserved_area_right, effective_zone);
+                }
+            }
+            
+            if (!is_anchored_vertically) {
+                if ((anchor & anchor_top) != 0) {
+                    output.reserved_area_top = @max(output.reserved_area_top, effective_zone);
+                }
+                if ((anchor & anchor_bottom) != 0) {
+                    output.reserved_area_bottom = @max(output.reserved_area_bottom, effective_zone);
+                }
+            }
+        }
+    }
+    
     fn handleAnimationTimer(server: *Server) c_int {
         server.updateAnimations();
         // Continue timer if there are still animations
@@ -1094,6 +1155,10 @@ const Server = struct {
 const Output = struct {
     server: *Server,
     wlr_output: *wlr.Output,
+    reserved_area_top: i32 = 0,
+    reserved_area_right: i32 = 0,
+    reserved_area_bottom: i32 = 0,
+    reserved_area_left: i32 = 0,
 
     frame: wl.Listener(*wlr.Output) = .init(handleFrame),
     request_state: wl.Listener(*wlr.Output.event.RequestState) = .init(handleRequestState),
@@ -1106,6 +1171,7 @@ const Output = struct {
             .server = server,
             .wlr_output = wlr_output,
         };
+        wlr_output.data = @intFromPtr(output);
         wlr_output.events.frame.add(&output.frame);
         wlr_output.events.request_state.add(&output.request_state);
         wlr_output.events.destroy.add(&output.destroy);
@@ -1149,12 +1215,30 @@ const Output = struct {
     }
 };
 
+const ExclusiveZone = struct {
+    zone: i32 = 0,
+    anchor: u32 = 0,
+    margin_top: i32 = 0,
+    margin_right: i32 = 0,
+    margin_bottom: i32 = 0,
+    margin_left: i32 = 0,
+
+    fn hasExclusiveZone(self: ExclusiveZone) bool {
+        return self.zone > 0;
+    }
+
+    fn getEffectiveZone(self: ExclusiveZone) i32 {
+        return self.zone;
+    }
+};
+
 const LayerSurface = struct {
     server: *Server,
     link: wl.list.Link = undefined,
     layer_surface: *wlr.LayerSurfaceV1,
     scene_layer_surface: *wlr.SceneLayerSurfaceV1,
     configured: bool = false,
+    exclusive_zone: ExclusiveZone = ExclusiveZone{},
 
     map: wl.Listener(void) = .init(handleMap),
     unmap: wl.Listener(void) = .init(handleUnmap),
@@ -1166,15 +1250,34 @@ const LayerSurface = struct {
         const layer_surface: *LayerSurface = @fieldParentPtr("map", listener);
         // Add to the server's list when mapped
         layer_surface.server.layer_surfaces.append(layer_surface);
+        
+        // Arrange windows if this layer surface has an exclusive zone
+        if (layer_surface.exclusive_zone.hasExclusiveZone()) {
+            layer_surface.server.arrangeWindows();
+        }
     }
 
     fn handleUnmap(listener: *wl.Listener(void)) void {
         const layer_surface: *LayerSurface = @fieldParentPtr("unmap", listener);
         layer_surface.link.remove();
+        
+        // Arrange windows to reclaim space if this layer surface had an exclusive zone
+        if (layer_surface.exclusive_zone.hasExclusiveZone()) {
+            layer_surface.server.arrangeWindows();
+        }
     }
 
     fn handleCommit(listener: *wl.Listener(*wlr.Surface), _: *wlr.Surface) void {
         const layer_surface: *LayerSurface = @fieldParentPtr("commit", listener);
+
+        // Update exclusive zone information from pending state
+        const pending = layer_surface.layer_surface.pending;
+        layer_surface.exclusive_zone.zone = pending.exclusive_zone;
+        layer_surface.exclusive_zone.anchor = @as(u32, @bitCast(pending.anchor));
+        layer_surface.exclusive_zone.margin_top = pending.margin.top;
+        layer_surface.exclusive_zone.margin_right = pending.margin.right;
+        layer_surface.exclusive_zone.margin_bottom = pending.margin.bottom;
+        layer_surface.exclusive_zone.margin_left = pending.margin.left;
 
         // Only configure if not yet configured or if the surface needs reconfiguration
         if (!layer_surface.configured) {
@@ -1201,11 +1304,24 @@ const LayerSurface = struct {
             // Configure with the determined size
             _ = layer_surface.layer_surface.configure(width, height);
             layer_surface.configured = true;
+            
+            // After configuration, we need to arrange windows if this layer surface has an exclusive zone
+            if (layer_surface.exclusive_zone.hasExclusiveZone()) {
+                layer_surface.server.arrangeWindows();
+            }
+        } else if (layer_surface.configured) {
+            // If already configured and exclusive zone changed, rearrange windows
+            layer_surface.server.arrangeWindows();
         }
     }
 
     fn handleDestroy(listener: *wl.Listener(*wlr.LayerSurfaceV1), _: *wlr.LayerSurfaceV1) void {
         const layer_surface: *LayerSurface = @fieldParentPtr("destroy", listener);
+
+        // Arrange windows to reclaim space if this layer surface had an exclusive zone
+        if (layer_surface.exclusive_zone.hasExclusiveZone()) {
+            layer_surface.server.arrangeWindows();
+        }
 
         // Remove from server's layer surfaces list if still in it
         if (layer_surface.link.prev != null and layer_surface.link.next != null) {
