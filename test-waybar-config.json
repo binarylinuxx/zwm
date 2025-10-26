@@ -2,7 +2,7 @@
     "layer": "top",
     "position": "top",
     "exclusive": true,
-    "height": 30,
+    "height": 20,
     "modules-left": ["sway/workspaces", "sway/mode"],
     "modules-center": ["sway/window"],
     "modules-right": ["clock", "tray"],
@@ -10,6 +10,6 @@
         "disable-scroll": true
     },
     "clock": {
-        "format": "{:%H:%M - %A %d.%m.%Y}"
+        "format": "{:%I:%M - %A %d/%m/%Y}"
     }
 }

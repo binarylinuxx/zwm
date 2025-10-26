@@ -115,6 +115,7 @@ const Animation = struct {
     start_time: i64,
     duration: i64, // in microseconds
     spring_params: SpringParams,
+    last_update_time: i64, // To track the time of last update for frame-rate adaptive calculations
     link: wl.list.Link = undefined,
 
     fn init(toplevel: *Toplevel, target_x: i32, target_y: i32, target_width: i32, target_height: i32, duration_ms: i64) Animation {
@@ -134,6 +135,7 @@ const Animation = struct {
             .start_time = now,
             .duration = duration_ms * 1000, // convert to microseconds
             .spring_params = SpringParams{ .frequency = 8.0, .damping_ratio = 0.8 }, // Default spring parameters
+            .last_update_time = now, // Initialize with current time
         };
     }
 
@@ -383,14 +385,17 @@ const Server = struct {
         // Initialize animations list
         server.animations.init();
 
-        // Set up animation timer (10 FPS for cleanup when no animations are running on frame)
+        // Animation timer will be managed to only run when needed for cleanup
         server.animation_timer = try wl.EventLoop.addTimer(
             loop,
             *Server,
             handleAnimationTimer,
             server,
         );
-        try server.animation_timer.timerUpdate(100000); // 10 FPS in microseconds
+        // Initially set to not run, we'll start it when needed for cleanup purposes
+        _ = server.animation_timer.timerUpdate(0) catch |err| {
+            std.log.err("Failed to update animation timer: {}", .{err});
+        };
     }
 
     fn deinit(server: *Server) void {
@@ -994,8 +999,9 @@ const Server = struct {
     }
     
     fn handleAnimationTimer(server: *Server) c_int {
-        server.updateAnimations();
-        // Continue timer if there are still animations
+        // Timer is only for keeping the event loop running when animations are active
+        // The actual animation updates happen in handleFrame
+        // We'll just check if we still have animations to know whether to continue the timer
         return if (server.animations.length() > 0) 0 else 1;
     }
 
