@@ -2,7 +2,7 @@
 *ziged wlroots tiling Wayland Compositor*
 
 # Info
-always seen those eye candy compositors and they always uses C/++ and im decided try how far can i push with zig 
+always seen those eye candy compositors and they always uses C/++ and im decided try how far can i push with zig. repo has [GithubMirror](https://github.com/binarylinuxx/zwm.git) but mainly accepting all pull requests on [CodebergRepo](https://codeberg.org/blx/zwm.git) all other things issues and etc on both.
 
 **currently support:**
 - Basic Master Stack
@@ -14,6 +14,7 @@ always seen those eye candy compositors and they always uses C/++ and im decided
 - Blur 
 - Window Rounding
 - Custom renderer for FX effects
+- Migration to wlroots 0.19 for custom render
 
 **Current project status:**
 - zwm are very young expect many issues and bugs
