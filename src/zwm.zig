@@ -564,7 +564,7 @@ const Server = struct {
         toplevel.border_container = border_container;
         
         // Create the four border rectangles (top, right, bottom, left)
-        const color = [4]f32{ 86.0, 30.0, 25.0, 1.0}; // Desaturated red
+        const color = [4]f32{ 0.196, 0.157, 0.369, 1.0}; // #32285e (inactive border color)
 
         // Top border
         toplevel.border_nodes[0] = border_container.createSceneRect(
@@ -742,7 +742,7 @@ const Server = struct {
     }
 
     fn setBorderActive(toplevel: *Toplevel, active: bool) void {
-        const color = if (active) [4]f32{ 255, 180, 171, 1.0 } else [4]f32{ 0.4, 0.4, 0.4, 1.0 }; // Blue for active, grey for inactive
+        const color = if (active) [4]f32{ 0.796, 0.745, 1.0, 1.0 } else [4]f32{ 0.196, 0.157, 0.369, 1.0 }; // #cbbeff for active, #32285e for inactive
         
         for (toplevel.border_nodes) |border_node| {
             _ = border_node.setColor(&color);
