@@ -9,3 +9,4 @@
 .zig-cache/
 zig-out/
 src.backup/
+config.zig
