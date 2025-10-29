@@ -59,8 +59,8 @@ pub fn hexToRGBA(hexStr: []const u8) [4]f32 {
 
 // Color constants using hex strings
 pub const colors = struct {
-    pub const active_border = hexToRGBA("#cbbeff"); // light purple for active border
-    pub const inactive_border = hexToRGBA("#32285e"); // dark purple for inactive border
+    pub const active_border = hexToRGBA("#ffb4a4"); // light purple for active border
+    pub const inactive_border = hexToRGBA("#561f13"); // dark purple for inactive border
     pub const background = hexToRGBA("#2D2D2D"); // dark gray background
     pub const text = hexToRGBA("#FFFFFF"); // white text
 };

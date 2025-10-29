@@ -66,6 +66,11 @@ pub const Toplevel = struct {
 
     fn handleMap(listener: *wl.Listener(void)) void {
         const toplevel: *Toplevel = @fieldParentPtr("map", listener);
+        
+        // Make sure the border container is positioned correctly when the window is mapped
+        const border_width = toplevel.server.border_width;
+        toplevel.border_container.node.setPosition(toplevel.x - border_width, toplevel.y - border_width);
+        
         toplevel.server.toplevels.prepend(toplevel);
         toplevel.server.focusView(toplevel, toplevel.xdg_toplevel.base.surface, true);
         // Rearrange windows when a new one is mapped

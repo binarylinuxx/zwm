@@ -410,6 +410,22 @@ pub const Server = struct {
         // This tricks clients into thinking they don't need to draw decorations
         var geometry: wlr.Box = undefined;
         xdg_surface.getGeometry(&geometry);
+        
+        // Get the actual initial window position from geometry
+        const initial_x: i32 = 0;
+        const initial_y: i32 = 0;
+        
+        // Update the toplevel's x and y based on geometry
+        toplevel.x = initial_x;
+        toplevel.y = initial_y;
+        
+        // Set initial position for the border container to match where the window will appear
+        const border_width = server.border_width;
+        toplevel.border_container.node.setPosition(initial_x - border_width, initial_y - border_width);
+        
+        // Update the border dimensions based on the initial geometry
+        toplevel.updateBorder(initial_x, initial_y, geometry.width, geometry.height);
+        
         // Set the window size to be larger than the content area, effectively hiding client decorations
         _ = xdg_toplevel.setSize(geometry.width + 20, geometry.height + 40); // Add padding for hidden decorations
 
