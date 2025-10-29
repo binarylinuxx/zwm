@@ -15,6 +15,7 @@ always seen those eye candy compositors and they always uses C/++ and im decided
 - Window Rounding
 - Custom renderer for FX effects
 - Migration to wlroots 0.19 for custom render
+- Config parser instead .zig file
 
 **Current project status:**
 - zwm are very young expect many issues and bugs
@@ -35,3 +36,6 @@ cd zwm
 make build
 sudo make install # optional if you want install zwm to path
 ```
+
+# Config
+config use simplyfied zig syntax and exposed at src 

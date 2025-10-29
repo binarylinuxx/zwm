@@ -11,9 +11,10 @@ const xkb = @import("xkbcommon");
 const gpa = std.heap.c_allocator;
 
 const Server = @import("core/server.zig").Server;
+const config = @import("config.zig");
 
 // Define the corner radius constant
-const corner_radius: i32 = 12;
+const corner_radius: i32 = config.layout.corner_radius;
 
 pub fn main() anyerror!void {
     wlr.log.init(.debug, null);
