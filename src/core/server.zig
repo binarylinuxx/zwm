@@ -17,7 +17,8 @@ const Output = @import("../structs/output.zig").Output;
 const Animation = @import("../animation/animation.zig").Animation;
 const Popup = @import("../structs/popup.zig").Popup;
 const Keyboard = @import("../structs/keyboard.zig").Keyboard;
-const config = @import("../config.zig");
+const config_parser = @import("../config_parser.zig");
+const Config = config_parser.Config;
 
 const SpringParams = @import("../utils/easing.zig").SpringParams;
 const cubicBezier = @import("../utils/easing.zig").cubicBezier;
@@ -26,9 +27,9 @@ const solveCubicBezier = @import("../utils/easing.zig").solveCubicBezier;
 const easeCubicBezier = @import("../utils/easing.zig").easeCubicBezier;
 const springInterpolate = @import("../utils/easing.zig").springInterpolate;
 
-const corner_radius: i32 = config.layout.corner_radius;
-
 pub const Server = struct {
+    // Runtime configuration
+    config: Config,
     wl_server: *wl.Server,
     backend: *wlr.Backend,
     renderer: *wlr.Renderer,
@@ -82,17 +83,19 @@ pub const Server = struct {
 
     wayland_display: []const u8,
 
-    // Layout configuration
-    master_ratio: f32,
-    gap_size: i32,
-    border_width: i32,
+    // Layout state
     master_toplevel: ?*Toplevel = null, // Track master window separately
 
     // Animation management
     animations: wl.list.Head(Animation, .link) = undefined,
     animation_timer: *wl.EventSource = undefined,
-    
-    pub fn init(server: *Server) !void {
+
+    // Config file watching
+    config_watch_fd: i32 = -1,
+    config_watch_wd: i32 = -1,
+    config_watch_source: ?*wl.EventSource = null,
+
+    pub fn init(server: *Server, config: Config) !void {
         const wl_server = try wl.Server.create();
         const loop = wl_server.getEventLoop();
         const backend = try wlr.Backend.autocreate(loop, null);
@@ -113,6 +116,7 @@ pub const Server = struct {
         }
 
         server.* = .{
+            .config = config,
             .wl_server = wl_server,
             .backend = backend,
             .renderer = renderer,
@@ -130,9 +134,6 @@ pub const Server = struct {
             .layer_trees = layer_trees,
             .screencopy_manager = screencopy_manager,
             .wayland_display = "",
-            .master_ratio = config.layout.master_ratio,
-            .gap_size = config.layout.gap_size,
-            .border_width = config.layout.border_width,
         };
         
         std.log.info("Server initialized", .{});
@@ -190,9 +191,124 @@ pub const Server = struct {
         _ = server.animation_timer.timerUpdate(0) catch |err| {
             std.log.err("Failed to update animation timer: {}", .{err});
         };
+
+        // Set up config file watching
+        try server.setupConfigWatch(loop);
+    }
+
+    fn setupConfigWatch(server: *Server, loop: *wl.EventLoop) !void {
+        const config_path = try config_parser.getConfigPath(gpa);
+        defer gpa.free(config_path);
+
+        // Initialize inotify
+        const inotify_fd = std.posix.inotify_init1(std.os.linux.IN.CLOEXEC | std.os.linux.IN.NONBLOCK) catch |err| {
+            std.log.warn("Failed to initialize inotify for config watching: {}", .{err});
+            return;
+        };
+
+        // Add watch for config file
+        // Need to create a null-terminated path for inotify_add_watch
+        const config_path_z = try gpa.dupeZ(u8, config_path);
+        defer gpa.free(config_path_z);
+
+        const watch_wd = std.posix.inotify_add_watch(
+            inotify_fd,
+            config_path_z,
+            std.os.linux.IN.MODIFY | std.os.linux.IN.CLOSE_WRITE,
+        ) catch |err| {
+            std.log.warn("Failed to watch config file {s}: {}", .{ config_path, err });
+            _ = std.posix.close(inotify_fd);
+            return;
+        };
+
+        // Add file descriptor to event loop
+        const watch_source = loop.addFd(
+            *Server,
+            inotify_fd,
+            1, // WL_EVENT_READABLE
+            handleConfigChange,
+            server,
+        ) catch |err| {
+            std.log.warn("Failed to add inotify fd to event loop: {}", .{err});
+            _ = std.posix.inotify_rm_watch(inotify_fd, watch_wd);
+            _ = std.posix.close(inotify_fd);
+            return;
+        };
+
+        server.config_watch_fd = inotify_fd;
+        server.config_watch_wd = watch_wd;
+        server.config_watch_source = watch_source;
+
+        std.log.info("Watching config file for changes: {s}", .{config_path});
+    }
+
+    fn handleConfigChange(fd: i32, mask: u32, server: *Server) c_int {
+        _ = mask;
+
+        // Read inotify events
+        var buffer: [4096]u8 align(@alignOf(std.os.linux.inotify_event)) = undefined;
+        const bytes_read = std.posix.read(fd, &buffer) catch |err| {
+            std.log.err("Failed to read inotify events: {}", .{err});
+            return 0;
+        };
+
+        if (bytes_read == 0) return 0;
+
+        var i: usize = 0;
+        while (i < bytes_read) {
+            const event = @as(*const std.os.linux.inotify_event, @ptrCast(@alignCast(&buffer[i])));
+
+            if (event.mask & (std.os.linux.IN.MODIFY | std.os.linux.IN.CLOSE_WRITE) != 0) {
+                std.log.info("Config file changed, reloading...", .{});
+                server.reloadConfig() catch |err| {
+                    std.log.err("Failed to reload config: {}", .{err});
+                };
+            }
+
+            i += @sizeOf(std.os.linux.inotify_event) + event.len;
+        }
+
+        return 0;
+    }
+
+    pub fn reloadConfig(server: *Server) !void {
+        std.log.info("Reloading configuration...", .{});
+
+        // Get config path
+        const config_path = try config_parser.getConfigPath(gpa);
+        defer gpa.free(config_path);
+
+        // Load new config
+        const new_config = config_parser.loadConfig(gpa, config_path) catch |err| {
+            std.log.err("Failed to reload config: {}", .{err});
+            return err;
+        };
+
+        // Free old config data
+        server.config.keybinds.deinit();
+        server.config.commands.deinit();
+
+        // Replace with new config
+        server.config = new_config;
+
+        // Rearrange windows with new settings
+        server.arrangeWindows();
+
+        std.log.info("Configuration reloaded successfully from: {s}", .{config_path});
     }
 
     pub fn deinit(server: *Server) void {
+        // Clean up config watching
+        if (server.config_watch_source) |source| {
+            source.remove();
+        }
+        if (server.config_watch_fd != -1) {
+            if (server.config_watch_wd != -1) {
+                _ = std.posix.inotify_rm_watch(server.config_watch_fd, server.config_watch_wd);
+            }
+            std.posix.close(server.config_watch_fd);
+        }
+
         server.animation_timer.remove();
 
         server.wl_server.destroyClients();
@@ -227,10 +343,10 @@ pub const Server = struct {
             var box: wlr.Box = undefined;
             server.output_layout.getBox(layout_output.output, &box);
 
-            const usable_x = box.x + output.reserved_area_left + server.gap_size;
-            const usable_y = box.y + output.reserved_area_top + server.gap_size;
-            const usable_width = box.width - output.reserved_area_left - output.reserved_area_right - (server.gap_size * 2);
-            const usable_height = box.height - output.reserved_area_top - output.reserved_area_bottom - (server.gap_size * 2);
+            const usable_x = box.x + output.reserved_area_left + server.config.gap_size;
+            const usable_y = box.y + output.reserved_area_top + server.config.gap_size;
+            const usable_width = box.width - output.reserved_area_left - output.reserved_area_right - (server.config.gap_size * 2);
+            const usable_height = box.height - output.reserved_area_top - output.reserved_area_bottom - (server.config.gap_size * 2);
 
             var toplevels_on_output = std.ArrayList(*Toplevel).init(gpa);
             defer toplevels_on_output.deinit();
@@ -261,8 +377,8 @@ pub const Server = struct {
                 const h = usable_height;
                 server.startAnimation(toplevel, x, y, w, h);
             } else {
-                const master_width = @as(i32, @intFromFloat(@as(f32, @floatFromInt(usable_width)) * server.master_ratio)) - server.gap_size;
-                const stack_width = usable_width - master_width - server.gap_size;
+                const master_width = @as(i32, @intFromFloat(@as(f32, @floatFromInt(usable_width)) * server.config.master_ratio)) - server.config.gap_size;
+                const stack_width = usable_width - master_width - server.config.gap_size;
 
                 var master: ?*Toplevel = null;
                 if (server.master_toplevel) |m| {
@@ -294,12 +410,12 @@ pub const Server = struct {
                         continue;
                     }
 
-                    const x = usable_x + master_width + server.gap_size;
+                    const x = usable_x + master_width + server.config.gap_size;
                     const y = usable_y + @as(i32, @intCast(stack_idx)) * stack_height;
                     const h = if (stack_idx == stack_count - 1)
                         usable_height - @as(i32, @intCast(stack_idx)) * stack_height
                     else
-                        stack_height - server.gap_size;
+                        stack_height - server.config.gap_size;
 
                     server.startAnimation(toplevel, x, y, stack_width, h);
                     stack_idx += 1;
@@ -356,9 +472,9 @@ pub const Server = struct {
             return;
         };
         toplevel.border_container = border_container;
-        
+
         // Create the four border rectangles (top, right, bottom, left)
-        const color = config.colors.inactive_border; // #32285e (inactive border color)
+        const color = server.config.inactive_border;
 
         // Top border
         toplevel.border_nodes[0] = border_container.createSceneRect(
@@ -420,7 +536,7 @@ pub const Server = struct {
         toplevel.y = initial_y;
         
         // Set initial position for the border container to match where the window will appear
-        const border_width = server.border_width;
+        const border_width = server.config.border_width;
         toplevel.border_container.node.setPosition(initial_x - border_width, initial_y - border_width);
         
         // Update the border dimensions based on the initial geometry
@@ -551,8 +667,8 @@ pub const Server = struct {
     }
 
     fn setBorderActive(toplevel: *Toplevel, active: bool) void {
-        const color = if (active) config.colors.active_border else config.colors.inactive_border;
-        
+        const color = if (active) toplevel.server.config.active_border else toplevel.server.config.inactive_border;
+
         for (toplevel.border_nodes) |border_node| {
             _ = border_node.setColor(&color);
         }
@@ -661,7 +777,7 @@ pub const Server = struct {
             },
             .move => {
                 const toplevel = server.grabbed_view.?;
-                const bw = server.border_width;
+                const bw = server.config.border_width;
                 const border_x = @as(i32, @intFromFloat(server.cursor.x - server.grab_x));
                 const border_y = @as(i32, @intFromFloat(server.cursor.y - server.grab_y));
                 toplevel.border_container.node.setPosition(border_x - bw, border_y - bw);
@@ -848,10 +964,10 @@ pub const Server = struct {
             std.log.err("failed to create animation", .{});
             return;
         };
-        // Use 400ms duration for spring animations to allow for natural oscillation
-        animation.* = Animation.init(toplevel, target_x, target_y, target_width, target_height, 400); 
-        // Configure spring parameters for smooth window movement (critically damped for minimal oscillation)
-        animation.spring_params = SpringParams{ .frequency = 6.0, .damping_ratio = 1.0 };
+        // Use configured duration for spring animations
+        animation.* = Animation.init(toplevel, target_x, target_y, target_width, target_height, server.config.animation_duration);
+        // Configure spring parameters from config
+        animation.spring_params = SpringParams{ .frequency = server.config.spring_frequency, .damping_ratio = server.config.spring_damping_ratio };
         server.animations.append(animation);
     }
 

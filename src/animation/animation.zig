@@ -73,9 +73,9 @@ pub const Animation = struct {
         const int_current_width = @as(i32, @intFromFloat(current_width));
         const int_current_height = @as(i32, @intFromFloat(current_height));
 
-        _ = self.toplevel.server.border_width;
-        self.toplevel.border_container.node.setPosition(int_current_x - self.toplevel.server.border_width, int_current_y - self.toplevel.server.border_width);
-        self.toplevel.scene_tree.node.setPosition(self.toplevel.server.border_width, self.toplevel.server.border_width);
+        _ = self.toplevel.server.config.border_width;
+        self.toplevel.border_container.node.setPosition(int_current_x - self.toplevel.server.config.border_width, int_current_y - self.toplevel.server.config.border_width);
+        self.toplevel.scene_tree.node.setPosition(self.toplevel.server.config.border_width, self.toplevel.server.config.border_width);
         _ = self.toplevel.xdg_toplevel.setSize(int_current_width, int_current_height);
 
         self.toplevel.x = int_current_x;

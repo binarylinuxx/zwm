@@ -11,11 +11,11 @@ always seen those eye candy compositors and they always uses C/++ and im decided
 
 **TO-DO:**
 - Fix Some bugs
-- Blur 
+- Blur
 - Window Rounding
 - Custom renderer for FX effects
 - Migration to wlroots 0.19 for custom render
-- Config parser instead .zig file
+- [x] Config parser instead .zig file
 
 **Current project status:**
 - zwm are very young expect many issues and bugs
@@ -38,4 +38,22 @@ sudo make install # optional if you want install zwm to path
 ```
 
 # Config
-config use simplyfied zig syntax and exposed at src 
+Configuration uses KDL (KDL Document Language) format and is located at `~/.config/zwm/zwm.kdl`.
+
+On first run, ZWM will automatically create the config directory and generate a default config file with sensible defaults.
+
+**Hot Reload:** Press `Mod+Shift+r` to reload the config on the fly without restarting the compositor!
+
+Example keybind in `zwm.kdl`:
+```kdl
+layout {
+    binds {
+        Mod+Return {
+            spawn "kitty"
+        }
+        Mod+Shift+r {
+            reload-config
+        }
+    }
+}
+```

@@ -36,6 +36,7 @@ pub fn build(b: *std.Build) void {
     const xkbcommon = b.dependency("xkbcommon", .{}).module("xkbcommon");
     const pixman = b.dependency("pixman", .{}).module("pixman");
     const wlroots = b.dependency("wlroots", .{}).module("wlroots");
+    const kdl = b.dependency("kdl", .{}).module("kdl");
 
     wlroots.addImport("wayland", wayland);
     wlroots.addImport("xkbcommon", xkbcommon);
@@ -61,6 +62,7 @@ pub fn build(b: *std.Build) void {
     zwm.root_module.addImport("wayland", wayland);
     zwm.root_module.addImport("xkbcommon", xkbcommon);
     zwm.root_module.addImport("wlroots", wlroots);
+    zwm.root_module.addImport("kdl", kdl);
     zwm.linkSystemLibrary("glesv2");
 
     zwm.linkSystemLibrary("wayland-server");

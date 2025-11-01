@@ -11,13 +11,14 @@
             .url = "https://codeberg.org/ifreund/zig-wayland/archive/v0.3.0.tar.gz",
             .hash = "wayland-0.3.0-lQa1kjPIAQDmhGYpY-zxiRzQJFHQ2VqhJkQLbKKdt5wl",
         },
-        .wlroots = .{
-            .url = "https://codeberg.org/ifreund/zig-wlroots/archive/v0.18.2.tar.gz",
-            .hash = "wlroots-0.18.2-jmOlchnIAwBq45_cxU1V3OWErxxJjQZlc9PyJfR-l3uk"
-        },
+        .wlroots = .{ .url = "https://codeberg.org/ifreund/zig-wlroots/archive/v0.18.2.tar.gz", .hash = "wlroots-0.18.2-jmOlchnIAwBq45_cxU1V3OWErxxJjQZlc9PyJfR-l3uk" },
         .xkbcommon = .{
             .url = "https://codeberg.org/ifreund/zig-xkbcommon/archive/v0.3.0.tar.gz",
             .hash = "xkbcommon-0.3.0-VDqIe3K9AQB2fG5ZeRcMC9i7kfrp5m2rWgLrmdNn9azr",
+        },
+        .kdl = .{
+            .url = "git+https://codeberg.org/desttinghim/zig-kdl?ref=main#edc943426ba1fc47606568a9fc7f402b2b1992e0",
+            .hash = "kdl-0.0.0-8rilEPw_AQDhyfjEIg9pzpBHUyz6bOQ6qCfZImzYn42A",
         },
     },
     .fingerprint = 0xf55ac640458bb2e0,

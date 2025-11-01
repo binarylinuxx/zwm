@@ -41,7 +41,7 @@ pub const Toplevel = struct {
     }
 
     pub fn updateBorder(toplevel: *Toplevel, x: i32, y: i32, width: i32, height: i32) void {
-        const border_width = toplevel.server.border_width;
+        const border_width = toplevel.server.config.border_width;
 
         // Update border container position to match the toplevel
         toplevel.border_container.node.setPosition(x - border_width, y - border_width);
@@ -68,7 +68,7 @@ pub const Toplevel = struct {
         const toplevel: *Toplevel = @fieldParentPtr("map", listener);
         
         // Make sure the border container is positioned correctly when the window is mapped
-        const border_width = toplevel.server.border_width;
+        const border_width = toplevel.server.config.border_width;
         toplevel.border_container.node.setPosition(toplevel.x - border_width, toplevel.y - border_width);
         
         toplevel.server.toplevels.prepend(toplevel);

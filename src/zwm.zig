@@ -11,10 +11,7 @@ const xkb = @import("xkbcommon");
 const gpa = std.heap.c_allocator;
 
 const Server = @import("core/server.zig").Server;
-const config = @import("config.zig");
-
-// Define the corner radius constant
-const corner_radius: i32 = config.layout.corner_radius;
+const config_parser = @import("config_parser.zig");
 
 pub fn main() anyerror!void {
     wlr.log.init(.debug, null);
@@ -31,8 +28,16 @@ pub fn main() anyerror!void {
 
     std.log.info("Starting ZWM compositor", .{});
 
+    // Ensure config exists and get path
+    const config_path = try config_parser.ensureConfigExists(gpa);
+    defer gpa.free(config_path);
+
+    // Load configuration
+    const config = try config_parser.loadConfig(gpa, config_path);
+    std.log.info("Loaded configuration from {s}", .{config_path});
+
     var server: Server = undefined;
-    try server.init();
+    try server.init(config);
     defer server.deinit();
 
     var buf: [11]u8 = undefined;

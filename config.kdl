@@ -1,0 +1,87 @@
+// ZWM Configuration File
+
+// Visual settings
+visual {
+    colors {
+        active-border "#ffb4a4"
+        inactive-border "#561f13"
+        background "#2D2D2D"
+        text "#FFFFFF"
+    }
+
+    border-width 3
+    corner-radius 0
+    gap-size 10
+}
+
+// Layout, window management, and keybinds
+layout {
+    master-ratio 0.5
+
+    animation {
+        duration 400
+        spring-frequency 6.0
+        spring-damping-ratio 1.0
+    }
+
+    binds {
+        // Application launchers
+        Mod+Return {
+            spawn "kitty"
+        }
+
+        // Window focus
+        Mod+j {
+            focus-next
+        }
+        Mod+k {
+            focus-prev
+        }
+
+        // Layout adjustments
+        Mod+h {
+            decrease-ratio
+        }
+        Mod+l {
+            increase-ratio
+        }
+
+        // Window management
+        Mod+q {
+            close-window
+        }
+
+        // System
+        Mod+Shift+q {
+            quit
+        }
+        Escape {
+            quit
+        }
+    }
+}
+
+// Input configuration
+input {
+    keyboard {
+        xkb {
+            layout "us,ru"
+            options "grp:alt_shift_toggle"
+        }
+    }
+}
+
+// Environment variables
+environment {
+    DISPLAY ":0"
+    QT_QPA_PLATFORM "wayland"
+    EDITOR "emacsclient"
+}
+
+// External commands
+commands {
+    terminal "kitty"
+    launcher "bemenu-run"
+    screenshot "grim"
+    lock "swaylock"
+}

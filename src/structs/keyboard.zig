@@ -9,7 +9,9 @@ const gpa = std.heap.c_allocator;
 
 const Server = @import("../core/server.zig").Server;
 const Toplevel = @import("../structs/toplevel.zig").Toplevel;
-const config = @import("../config.zig");
+const config_parser = @import("../config_parser.zig");
+const MOD = config_parser.MOD;
+const Action = config_parser.Action;
 
 pub const Keyboard = struct {
     server: *Server,
@@ -75,35 +77,43 @@ pub const Keyboard = struct {
             });
 
             for (xkb_state.keyGetSyms(keycode)) |sym| {
-                std.log.info("Key symbol: {}", .{sym});
-                
-                // Check against configured keybinds by iterating through config
                 const sym_int = @intFromEnum(sym);
-                inline for (config.keys) |keybind| {
+                std.log.info("Key symbol: {} (int: {})", .{sym, sym_int});
+
+                // Check against configured keybinds by iterating through runtime config
+                for (keyboard.server.config.keybinds.items) |keybind| {
                     var match = sym_int == keybind.keysym;
-                    
+
+                    if (match) {
+                        std.log.info("Found matching keysym! Checking modifiers: keybind.mod={} logo={} shift={} ctrl={} alt={}", .{keybind.modifiers, modifiers.logo, modifiers.shift, modifiers.ctrl, modifiers.alt});
+                    }
+
                     // Check if modifiers match based on our MOD constants
                     if (match) {
-                        if (config.MOD.LOGO == keybind.modifiers) {
+                        if (MOD.LOGO == keybind.modifiers) {
                             match = modifiers.logo and !modifiers.shift and !modifiers.ctrl and !modifiers.alt;
-                        } else if (config.MOD.LOGO_SHIFT == keybind.modifiers) {
+                        } else if (MOD.LOGO_SHIFT == keybind.modifiers) {
                             match = modifiers.logo and modifiers.shift and !modifiers.ctrl and !modifiers.alt;
-                        } else if (config.MOD.NONE == keybind.modifiers) {
+                        } else if (MOD.NONE == keybind.modifiers) {
                             match = !modifiers.logo and !modifiers.shift and !modifiers.ctrl and !modifiers.alt;
-                        } else if (config.MOD.SHIFT == keybind.modifiers) {
+                        } else if (MOD.SHIFT == keybind.modifiers) {
                             match = modifiers.shift and !modifiers.logo and !modifiers.ctrl and !modifiers.alt;
-                        } else if (config.MOD.CTRL == keybind.modifiers) {
+                        } else if (MOD.CTRL == keybind.modifiers) {
                             match = modifiers.ctrl and !modifiers.logo and !modifiers.shift and !modifiers.alt;
-                        } else if (config.MOD.ALT == keybind.modifiers) {
+                        } else if (MOD.ALT == keybind.modifiers) {
                             match = modifiers.alt and !modifiers.logo and !modifiers.shift and !modifiers.ctrl;
                         } else {
                             match = false;
                         }
                     }
-                    
+
                     if (match) {
+                        std.log.info("MATCH! Executing action: {}", .{keybind.action});
                         // Check if this keybind has an action to execute
-                        if (keybind.action != .none) {
+                        if (keybind.action == .spawn) {
+                            // Spawn action needs the cmd string
+                            keyboard.launchCommand(keybind.cmd);
+                        } else if (keybind.action != .none) {
                             keyboard.executeAction(keybind.action);
                         } else {
                             // Fall back to executing command string
@@ -125,9 +135,9 @@ pub const Keyboard = struct {
     }
     
     // Execute action based on the Action enum
-    fn executeAction(keyboard: *Keyboard, action: config.Action) void {
+    fn executeAction(keyboard: *Keyboard, action: Action) void {
         std.log.info("Executing action: {}", .{action});
-        
+
         switch (action) {
             .focus_next => {
                 if (keyboard.server.toplevels.length() < 2) return;
@@ -150,6 +160,10 @@ pub const Keyboard = struct {
                     keyboard.server.focusView(toplevel, toplevel.xdg_toplevel.base.surface, true);
                 }
             },
+            .focus_left, .focus_right => {
+                // TODO: Implement directional focus
+                std.log.info("Directional focus not yet implemented", .{});
+            },
             .close_window => {
                 if (keyboard.server.toplevels.length() == 0) return;
                 // Close the currently focused window (first in list)
@@ -159,17 +173,22 @@ pub const Keyboard = struct {
                 }
             },
             .increase_ratio => {
-                keyboard.server.master_ratio = @min(0.9, keyboard.server.master_ratio + 0.05);
+                keyboard.server.config.master_ratio = @min(0.9, keyboard.server.config.master_ratio + 0.05);
                 keyboard.server.arrangeWindows();
             },
             .decrease_ratio => {
-                keyboard.server.master_ratio = @max(0.1, keyboard.server.master_ratio - 0.05);
+                keyboard.server.config.master_ratio = @max(0.1, keyboard.server.config.master_ratio - 0.05);
                 keyboard.server.arrangeWindows();
             },
             .quit => {
                 keyboard.server.wl_server.terminate();
             },
-            .none => {}, // Do nothing
+            .reload_config => {
+                keyboard.server.reloadConfig() catch |err| {
+                    std.log.err("Failed to reload config: {}", .{err});
+                };
+            },
+            .none, .spawn => {}, // Do nothing (spawn is handled elsewhere)
         }
     }
     
@@ -206,10 +225,10 @@ pub const Keyboard = struct {
                 toplevel.xdg_toplevel.sendClose();
             }
         } else if (std.mem.eql(u8, cmd, "decrease_ratio")) {
-            keyboard.server.master_ratio = @max(0.1, keyboard.server.master_ratio - 0.05);
+            keyboard.server.config.master_ratio = @max(0.1, keyboard.server.config.master_ratio - 0.05);
             keyboard.server.arrangeWindows();
         } else if (std.mem.eql(u8, cmd, "increase_ratio")) {
-            keyboard.server.master_ratio = @min(0.9, keyboard.server.master_ratio + 0.05);
+            keyboard.server.config.master_ratio = @min(0.9, keyboard.server.config.master_ratio + 0.05);
             keyboard.server.arrangeWindows();
         } else if (std.mem.eql(u8, cmd, "kitty") or 
                    std.mem.eql(u8, cmd, "terminal")) {
@@ -220,17 +239,20 @@ pub const Keyboard = struct {
     
     // Launch external command
     fn launchCommand(keyboard: *Keyboard, cmd: []const u8) void {
+        std.log.info("launchCommand called with: '{s}'", .{cmd});
         var command_to_run: []const u8 = cmd;
-        
+
         // Look up command in config if it's a predefined name
-        for (config.commands) |command| {
+        for (keyboard.server.config.commands.items) |command| {
+            std.log.info("Checking command '{s}' == '{s}'?", .{command.name, cmd});
             if (std.mem.eql(u8, command.name, cmd)) {
                 command_to_run = command.cmd;
+                std.log.info("Found in config, using: '{s}'", .{command_to_run});
                 break;
             }
         }
-        
-        std.log.info("Launching command: {s}", .{command_to_run});
+
+        std.log.info("About to spawn: {s}", .{command_to_run});
         
         var child = std.process.Child.init(&[_][]const u8{ command_to_run }, gpa);
         child.stdin_behavior = .Ignore;
