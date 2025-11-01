@@ -42,18 +42,4 @@ Configuration uses KDL (KDL Document Language) format and is located at `~/.conf
 
 On first run, ZWM will automatically create the config directory and generate a default config file with sensible defaults.
 
-**Hot Reload:** Press `Mod+Shift+r` to reload the config on the fly without restarting the compositor!
-
-Example keybind in `zwm.kdl`:
-```kdl
-layout {
-    binds {
-        Mod+Return {
-            spawn "kitty"
-        }
-        Mod+Shift+r {
-            reload-config
-        }
-    }
-}
-```
+**Hot Reload:** Press `Mod+Shift+r` to reload the config on the fly without restarting the compositor and also has instant reload on change if no changes seen make sure no syntax error in the config.
