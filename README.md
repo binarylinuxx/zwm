@@ -10,12 +10,12 @@ always seen those eye candy compositors and they always uses C/++ and im decided
 - Basic LayerShell,WlrScreenCopy,WlrOutput protocols
 
 **TO-DO:**
-- Fix Some bugs
+- [x] Config parser instead .zig file
+- Fix Some bugs(appear to be permanent by develop progress)
+- Migration to wlroots 0.19 for custom render
+- Custom renderer for FX effects via Shaders
 - Blur
 - Window Rounding
-- Custom renderer for FX effects
-- Migration to wlroots 0.19 for custom render
-- [x] Config parser instead .zig file
 
 **Current project status:**
 - zwm are very young expect many issues and bugs
@@ -39,6 +39,7 @@ sudo make install # optional if you want install zwm to path
 
 # Config
 Configuration uses KDL (KDL Document Language) format and is located at `~/.config/zwm/zwm.kdl`.
+Configuration currently parsed with my little yet simple KDL parser specifically 
 
 On first run, ZWM will automatically create the config directory and generate a default config file with sensible defaults.
 
