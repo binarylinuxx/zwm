@@ -29,7 +29,7 @@ pub const Output = struct {
             .server = server,
             .wlr_output = wlr_output,
         };
-        wlr_output.data = @intFromPtr(output);
+        wlr_output.data = output;
         wlr_output.events.frame.add(&output.frame);
         wlr_output.events.request_state.add(&output.request_state);
         wlr_output.events.destroy.add(&output.destroy);
@@ -38,6 +38,13 @@ pub const Output = struct {
 
         const scene_output = try server.scene.createSceneOutput(wlr_output);
         server.scene_output_layout.addOutput(layout_output, scene_output);
+
+        // Initialize OpenGL context for FX renderer on first output
+        if (!server.fx_renderer.initialized) {
+            server.fx_renderer.initializeGL() catch |err| {
+                std.log.err("Failed to initialize FX renderer GL context: {}", .{err});
+            };
+        }
     }
 
     fn handleFrame(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {

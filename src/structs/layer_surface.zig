@@ -140,7 +140,7 @@ pub const LayerSurface = struct {
             std.log.err("failed to allocate xdg popup node", .{});
             return;
         };
-        xdg_surface.data = @intFromPtr(scene_tree);
+        xdg_surface.data = scene_tree;
 
         const popup = gpa.create(@import("../structs/popup.zig").Popup) catch {
             std.log.err("failed to allocate new popup", .{});

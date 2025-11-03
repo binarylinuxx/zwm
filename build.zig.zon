@@ -11,7 +11,7 @@
             .url = "https://codeberg.org/ifreund/zig-wayland/archive/v0.3.0.tar.gz",
             .hash = "wayland-0.3.0-lQa1kjPIAQDmhGYpY-zxiRzQJFHQ2VqhJkQLbKKdt5wl",
         },
-        .wlroots = .{ .url = "https://codeberg.org/ifreund/zig-wlroots/archive/v0.18.2.tar.gz", .hash = "wlroots-0.18.2-jmOlchnIAwBq45_cxU1V3OWErxxJjQZlc9PyJfR-l3uk" },
+        .wlroots = .{ .url = "https://codeberg.org/ifreund/zig-wlroots/archive/v0.19.2.tar.gz", .hash = "wlroots-0.19.2-jmOlcsnnAwDFAeOamkUaxyHNhKngH4Ai5rrLSVbqA8LW", },
         .xkbcommon = .{
             .url = "https://codeberg.org/ifreund/zig-xkbcommon/archive/v0.3.0.tar.gz",
             .hash = "xkbcommon-0.3.0-VDqIe3K9AQB2fG5ZeRcMC9i7kfrp5m2rWgLrmdNn9azr",

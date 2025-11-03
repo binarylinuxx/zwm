@@ -10,8 +10,18 @@ visual {
     }
 
     border-width 3
-    corner-radius 0
+    corner-radius 12
     gap-size 10
+
+    blur {
+        enabled true
+        num-passes 2
+        radius 5.0
+        noise 0.02
+        brightness 0.9
+        contrast 0.9
+        saturation 1.0
+    }
 }
 
 // Layout, window management, and keybinds

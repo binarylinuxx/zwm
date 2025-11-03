@@ -82,9 +82,9 @@ pub const Animation = struct {
         self.toplevel.y = int_current_y;
 
         // Update border
-        var geometry: wlr.Box = undefined;
-        self.toplevel.xdg_toplevel.base.getGeometry(&geometry);
+        const geometry = self.toplevel.xdg_toplevel.base.current.geometry;
         self.toplevel.updateBorder(int_current_x, int_current_y, int_current_width, int_current_height);
+        _ = geometry;
 
         // Animation is complete when we're close enough to the target
         const position_threshold = 1.0;

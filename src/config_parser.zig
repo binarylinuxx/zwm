@@ -109,6 +109,17 @@ pub const Command = struct {
     cmd: []const u8,
 };
 
+// Blur configuration structure
+pub const BlurConfig = struct {
+    enabled: bool = false,
+    num_passes: i32 = 2,
+    radius: f32 = 5.0,
+    noise: f32 = 0.02,
+    brightness: f32 = 0.9,
+    contrast: f32 = 0.9,
+    saturation: f32 = 1.0,
+};
+
 // Configuration structure
 pub const Config = struct {
     // Visual settings
@@ -119,6 +130,9 @@ pub const Config = struct {
     border_width: i32,
     corner_radius: i32,
     gap_size: i32,
+
+    // Blur settings
+    blur: BlurConfig,
 
     // Layout settings
     master_ratio: f32,
@@ -240,6 +254,16 @@ const DEFAULT_CONFIG =
 \\    border-width 3
 \\    corner-radius 0
 \\    gap-size 10
+\\
+\\    blur {
+\\        enabled false
+\\        num-passes 2
+\\        radius 5.0
+\\        noise 0.02
+\\        brightness 0.9
+\\        contrast 0.9
+\\        saturation 1.0
+\\    }
 \\}
 \\
 \\// Layout, window management, and keybinds
@@ -364,6 +388,7 @@ pub fn loadConfig(allocator: std.mem.Allocator, config_path: []const u8) !Config
         .border_width = 3,
         .corner_radius = 0,
         .gap_size = 10,
+        .blur = BlurConfig{},
         .master_ratio = 0.5,
         .animation_duration = 400,
         .spring_frequency = 6.0,
@@ -434,6 +459,26 @@ fn parseVisualNode(node: *const simple_kdl.Node, config: *Config) !void {
                         config.background = hexToRGBA(color_str);
                     } else if (std.mem.eql(u8, color_node.name, "text")) {
                         config.text = hexToRGBA(color_str);
+                    }
+                }
+            }
+        } else if (std.mem.eql(u8, child.name, "blur")) {
+            for (child.children.items) |*blur_node| {
+                if (blur_node.getArg(0)) |arg| {
+                    if (std.mem.eql(u8, blur_node.name, "enabled")) {
+                        config.blur.enabled = std.mem.eql(u8, arg, "true");
+                    } else if (std.mem.eql(u8, blur_node.name, "num-passes")) {
+                        config.blur.num_passes = try std.fmt.parseInt(i32, arg, 10);
+                    } else if (std.mem.eql(u8, blur_node.name, "radius")) {
+                        config.blur.radius = try std.fmt.parseFloat(f32, arg);
+                    } else if (std.mem.eql(u8, blur_node.name, "noise")) {
+                        config.blur.noise = try std.fmt.parseFloat(f32, arg);
+                    } else if (std.mem.eql(u8, blur_node.name, "brightness")) {
+                        config.blur.brightness = try std.fmt.parseFloat(f32, arg);
+                    } else if (std.mem.eql(u8, blur_node.name, "contrast")) {
+                        config.blur.contrast = try std.fmt.parseFloat(f32, arg);
+                    } else if (std.mem.eql(u8, blur_node.name, "saturation")) {
+                        config.blur.saturation = try std.fmt.parseFloat(f32, arg);
                     }
                 }
             }

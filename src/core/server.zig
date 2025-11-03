@@ -19,6 +19,7 @@ const Popup = @import("../structs/popup.zig").Popup;
 const Keyboard = @import("../structs/keyboard.zig").Keyboard;
 const config_parser = @import("../config_parser.zig");
 const Config = config_parser.Config;
+const scenefx = @import("../render/scenefx.zig");
 
 const SpringParams = @import("../utils/easing.zig").SpringParams;
 const cubicBezier = @import("../utils/easing.zig").cubicBezier;
@@ -26,6 +27,8 @@ const cubicBezierDerivative = @import("../utils/easing.zig").cubicBezierDerivati
 const solveCubicBezier = @import("../utils/easing.zig").solveCubicBezier;
 const easeCubicBezier = @import("../utils/easing.zig").easeCubicBezier;
 const springInterpolate = @import("../utils/easing.zig").springInterpolate;
+
+const FXRenderer = @import("../render/fx_renderer.zig").FXRenderer;
 
 pub const Server = struct {
     // Runtime configuration
@@ -95,11 +98,14 @@ pub const Server = struct {
     config_watch_wd: i32 = -1,
     config_watch_source: ?*wl.EventSource = null,
 
+    // FX Renderer for custom effects
+    fx_renderer: FXRenderer = undefined,
+
     pub fn init(server: *Server, config: Config) !void {
         const wl_server = try wl.Server.create();
         const loop = wl_server.getEventLoop();
         const backend = try wlr.Backend.autocreate(loop, null);
-        const renderer = try wlr.Renderer.autocreate(backend);
+        const renderer = try scenefx.createFXRenderer(backend);
         const output_layout = try wlr.OutputLayout.create(wl_server);
         const scene = try wlr.Scene.create();
         const xdg_decoration_manager = try wlr.XdgDecorationManagerV1.create(wl_server);
@@ -146,7 +152,7 @@ pub const Server = struct {
 
         server.backend.events.new_output.add(&server.new_output);
 
-        server.xdg_shell.data = @intFromPtr(server);
+        server.xdg_shell.data = server;
         std.log.info("XDG shell data set to server ptr: {*}", .{server});
         server.xdg_shell.events.new_toplevel.add(&server.new_xdg_toplevel);
         server.xdg_shell.events.new_popup.add(&server.new_xdg_popup);
@@ -194,6 +200,28 @@ pub const Server = struct {
 
         // Set up config file watching
         try server.setupConfigWatch(loop);
+
+        // Initialize FX renderer
+        server.fx_renderer = try FXRenderer.init(gpa);
+        server.fx_renderer.setCornerRadius(@floatFromInt(server.config.corner_radius));
+
+        // Apply blur settings from config if enabled
+        if (server.config.blur.enabled) {
+            scenefx.setSceneBlurData(
+                server.scene,
+                @intCast(server.config.blur.num_passes),
+                @intFromFloat(server.config.blur.radius),
+                server.config.blur.noise,
+                server.config.blur.brightness,
+                server.config.blur.contrast,
+                server.config.blur.saturation,
+            );
+            std.log.info("Blur enabled with radius: {}, passes: {}", .{server.config.blur.radius, server.config.blur.num_passes});
+        }
+
+        // Initialize OpenGL resources (will be done after backend starts)
+        // We'll call initializeGL() when the first output is created
+        std.log.info("FX renderer initialized with corner radius: {}", .{server.config.corner_radius});
     }
 
     fn setupConfigWatch(server: *Server, loop: *wl.EventLoop) !void {
@@ -291,6 +319,28 @@ pub const Server = struct {
         // Replace with new config
         server.config = new_config;
 
+        // Update FX renderer settings
+        server.fx_renderer.setCornerRadius(@floatFromInt(server.config.corner_radius));
+        std.log.info("Updated corner radius to: {}", .{server.config.corner_radius});
+
+        // Update blur settings
+        if (server.config.blur.enabled) {
+            scenefx.setSceneBlurData(
+                server.scene,
+                @intCast(server.config.blur.num_passes),
+                @intFromFloat(server.config.blur.radius),
+                server.config.blur.noise,
+                server.config.blur.brightness,
+                server.config.blur.contrast,
+                server.config.blur.saturation,
+            );
+            std.log.info("Updated blur: radius={}, passes={}", .{server.config.blur.radius, server.config.blur.num_passes});
+        } else {
+            // Disable blur by setting radius to 0
+            scenefx.setSceneBlurData(server.scene, 0, 0, 0.0, 1.0, 1.0, 1.0);
+            std.log.info("Blur disabled", .{});
+        }
+
         // Rearrange windows with new settings
         server.arrangeWindows();
 
@@ -298,6 +348,9 @@ pub const Server = struct {
     }
 
     pub fn deinit(server: *Server) void {
+        // Clean up FX renderer
+        server.fx_renderer.deinit();
+
         // Clean up config watching
         if (server.config_watch_source) |source| {
             source.remove();
@@ -337,7 +390,7 @@ pub const Server = struct {
     pub fn arrangeWindows(server: *Server) void {
         var output_it = server.output_layout.outputs.iterator(.forward);
         while (output_it.next()) |layout_output| {
-            const output = @as(*Output, @ptrFromInt(layout_output.output.data));
+            const output = @as(*Output, @ptrCast(@alignCast(layout_output.output.data)));
             server.calculateReservedAreaForOutput(output);
 
             var box: wlr.Box = undefined;
@@ -353,8 +406,7 @@ pub const Server = struct {
 
             var toplevel_it = server.toplevels.iterator(.forward);
             while (toplevel_it.next()) |toplevel| {
-                var toplevel_geometry: wlr.Box = undefined;
-                toplevel.xdg_toplevel.base.getGeometry(&toplevel_geometry);
+                const toplevel_geometry = toplevel.xdg_toplevel.base.current.geometry;
 
                 const center_x = toplevel.x + @divTrunc(toplevel_geometry.width, 2);
                 const center_y = toplevel.y + @divTrunc(toplevel_geometry.height, 2);
@@ -464,7 +516,7 @@ pub const Server = struct {
             .scene_tree = undefined,
             .border_container = undefined,
         };
-        xdg_surface.data = @intFromPtr(toplevel);
+        xdg_surface.data = toplevel;
 
         // Create a border container for this toplevel
         const border_container = toplevel.server.layer_trees[@intFromEnum(Layer.app)].createSceneTree() catch {
@@ -473,47 +525,56 @@ pub const Server = struct {
         };
         toplevel.border_container = border_container;
 
-        // Create the four border rectangles (top, right, bottom, left)
-        const color = server.config.inactive_border;
-
-        // Top border
-        toplevel.border_nodes[0] = border_container.createSceneRect(
-            0, 0, &color
-        ) catch {
-            std.log.err("failed to allocate top border", .{});
-            return;
-        };
-
-        // Right border
-        toplevel.border_nodes[1] = border_container.createSceneRect(
-            0, 0, &color
-        ) catch {
-            std.log.err("failed to allocate right border", .{});
-            return;
-        };
-
-        // Bottom border
-        toplevel.border_nodes[2] = border_container.createSceneRect(
-            0, 0, &color
-        ) catch {
-            std.log.err("failed to allocate bottom border", .{});
-            return;
-        };
-
-        // Left border
-        toplevel.border_nodes[3] = border_container.createSceneRect(
-            0, 0, &color
-        ) catch {
-            std.log.err("failed to allocate left border", .{});
-            return;
-        };
-
+        // Create the window surface FIRST so borders render on top
         const scene_tree = border_container.createSceneXdgSurface(xdg_surface) catch {
             std.log.err("failed to allocate xdg toplevel scene node", .{});
             return;
         };
         toplevel.scene_tree = scene_tree;
-        scene_tree.node.data = @intFromPtr(toplevel);
+
+        // Position window inset by border_width so border overlays the window edges
+        const bw = server.config.border_width;
+        scene_tree.node.setPosition(bw, bw);
+
+        // Create 4 edge borders + 4 corner pieces AFTER window forming a complete frame
+        const color = server.config.inactive_border;
+
+        // Create 4 edge borders (top, right, bottom, left)
+        toplevel.border_nodes[0] = border_container.createSceneRect(0, 0, &color) catch {
+            std.log.err("failed to allocate top border", .{});
+            return;
+        };
+        toplevel.border_nodes[1] = border_container.createSceneRect(0, 0, &color) catch {
+            std.log.err("failed to allocate right border", .{});
+            return;
+        };
+        toplevel.border_nodes[2] = border_container.createSceneRect(0, 0, &color) catch {
+            std.log.err("failed to allocate bottom border", .{});
+            return;
+        };
+        toplevel.border_nodes[3] = border_container.createSceneRect(0, 0, &color) catch {
+            std.log.err("failed to allocate left border", .{});
+            return;
+        };
+
+        // Create 4 corner pieces (top-left, top-right, bottom-right, bottom-left)
+        toplevel.corner_nodes[0] = border_container.createSceneRect(0, 0, &color) catch {
+            std.log.err("failed to allocate top-left corner", .{});
+            return;
+        };
+        toplevel.corner_nodes[1] = border_container.createSceneRect(0, 0, &color) catch {
+            std.log.err("failed to allocate top-right corner", .{});
+            return;
+        };
+        toplevel.corner_nodes[2] = border_container.createSceneRect(0, 0, &color) catch {
+            std.log.err("failed to allocate bottom-right corner", .{});
+            return;
+        };
+        toplevel.corner_nodes[3] = border_container.createSceneRect(0, 0, &color) catch {
+            std.log.err("failed to allocate bottom-left corner", .{});
+            return;
+        };
+        scene_tree.node.data = toplevel;
 
         xdg_surface.surface.events.commit.add(&toplevel.commit);
         xdg_surface.surface.events.map.add(&toplevel.map);
@@ -522,33 +583,18 @@ pub const Server = struct {
         xdg_toplevel.events.request_move.add(&toplevel.request_move);
         xdg_toplevel.events.request_resize.add(&toplevel.request_resize);
 
-        // Force no client-side decorations by setting window geometry to include decorations
-        // This tricks clients into thinking they don't need to draw decorations
-        var geometry: wlr.Box = undefined;
-        xdg_surface.getGeometry(&geometry);
-        
-        // Get the actual initial window position from geometry
-        const initial_x: i32 = 0;
-        const initial_y: i32 = 0;
-        
-        // Update the toplevel's x and y based on geometry
-        toplevel.x = initial_x;
-        toplevel.y = initial_y;
-        
-        // Set initial position for the border container to match where the window will appear
-        const border_width = server.config.border_width;
-        toplevel.border_container.node.setPosition(initial_x - border_width, initial_y - border_width);
-        
-        // Update the border dimensions based on the initial geometry
-        toplevel.updateBorder(initial_x, initial_y, geometry.width, geometry.height);
-        
-        // Set the window size to be larger than the content area, effectively hiding client decorations
-        _ = xdg_toplevel.setSize(geometry.width + 20, geometry.height + 40); // Add padding for hidden decorations
-
+        // Decorations are handled by newXdgToplevelDecoration which sets server-side mode
+        // Initial position will be set by arrangeWindows when the window is mapped
+        toplevel.x = 0;
+        toplevel.y = 0;
     }
 
     fn newXdgToplevelDecoration(_: *wl.Listener(*wlr.XdgToplevelDecorationV1), decoration: *wlr.XdgToplevelDecorationV1) void {
-        _ = decoration.setMode(.server_side);
+        // Set decoration mode to server-side (compositor draws the borders, not the client)
+        // In wlroots 0.19, we should not call setMode if the surface is not initialized yet
+        // Let the default behavior handle it, or defer this call
+        _ = decoration;
+        // TODO: Properly handle decoration mode after surface initialization
     }
 
     fn newLayerSurface(listener: *wl.Listener(*wlr.LayerSurfaceV1), layer_surface: *wlr.LayerSurfaceV1) void {
@@ -612,8 +658,8 @@ pub const Server = struct {
         const xdg_surface = xdg_popup.base;
 
         const parent = wlr.XdgSurface.tryFromWlrSurface(xdg_popup.parent.?) orelse return;
-        const parent_tree = if (parent.data != 0)
-            @as(*wlr.SceneTree, @ptrFromInt(parent.data))
+        const parent_tree = if (parent.data) |data|
+            @as(*wlr.SceneTree, @ptrCast(@alignCast(data)))
         else {
             return;
         };
@@ -621,7 +667,7 @@ pub const Server = struct {
             std.log.err("failed to allocate xdg popup node", .{});
             return;
         };
-        xdg_surface.data = @intFromPtr(scene_tree);
+        xdg_surface.data = scene_tree;
 
         const popup = gpa.create(Popup) catch {
             std.log.err("failed to allocate new popup", .{});
@@ -646,17 +692,33 @@ pub const Server = struct {
         var sx: f64 = undefined;
         var sy: f64 = undefined;
         if (server.scene.tree.node.at(lx, ly, &sx, &sy)) |node| {
-            if (node.type != .buffer) return null;
-            const scene_buffer = wlr.SceneBuffer.fromNode(node);
-            const scene_surface = wlr.SceneSurface.tryFromBuffer(scene_buffer) orelse return null;
+            // First try to get the surface if it's a buffer
+            var surface: ?*wlr.Surface = null;
+            if (node.type == .buffer) {
+                const scene_buffer = wlr.SceneBuffer.fromNode(node);
+                if (wlr.SceneSurface.tryFromBuffer(scene_buffer)) |scene_surface| {
+                    surface = scene_surface.surface;
+                }
+            }
 
+            // Walk up the scene tree to find a toplevel, even if we're hovering over a border
             var it: ?*wlr.SceneTree = node.parent;
             while (it) |n| : (it = n.node.parent) {
-                if (n.node.data != 0) {
-                    const toplevel = @as(*Toplevel, @ptrFromInt(n.node.data));
+                if (n.node.data) |data| {
+                    const toplevel = @as(*Toplevel, @ptrCast(@alignCast(data)));
+
+                    // Validate that this toplevel is still in the server's list
+                    // This prevents using freed/stale pointers
+                    if (!isToplevelInServerList(server, toplevel)) {
+                        return null;
+                    }
+
+                    // If we found a toplevel, use its main surface if we don't have one
+                    const final_surface = surface orelse toplevel.xdg_toplevel.base.surface;
+
                     return ViewAtResult{
                         .toplevel = toplevel,
-                        .surface = scene_surface.surface,
+                        .surface = final_surface,
                         .sx = sx,
                         .sy = sy,
                     };
@@ -668,9 +730,11 @@ pub const Server = struct {
 
     fn setBorderActive(toplevel: *Toplevel, active: bool) void {
         const color = if (active) toplevel.server.config.active_border else toplevel.server.config.inactive_border;
-
-        for (toplevel.border_nodes) |border_node| {
-            _ = border_node.setColor(&color);
+        for (toplevel.border_nodes) |node| {
+            node.setColor(&color);
+        }
+        for (toplevel.corner_nodes) |node| {
+            node.setColor(&color);
         }
     }
 
@@ -683,34 +747,68 @@ pub const Server = struct {
                 return;
             }
             if (wlr.XdgSurface.tryFromWlrSurface(previous_surface)) |xdg_surface| {
-                _ = xdg_surface.role_data.toplevel.?.setActivated(false);
+                // Check if role_data.toplevel is not null before accessing
+                if (xdg_surface.role_data.toplevel) |prev_toplevel_data| {
+                    std.log.info("Setting previous window deactivated", .{});
+                    _ = prev_toplevel_data.setActivated(false);
+                } else {
+                    std.log.warn("Previous surface has no role_data.toplevel", .{});
+                }
                 
                 // Find the toplevel for the previous surface and make its border inactive
-                const prev_toplevel = @as(*Toplevel, @ptrFromInt(xdg_surface.data));
-                Server.setBorderActive(prev_toplevel, false);
+                if (xdg_surface.data) |data| {
+                    std.log.info("Found previous toplevel data at {*}", .{data});
+                    const prev_toplevel = @as(*Toplevel, @ptrCast(@alignCast(data)));
+                    Server.setBorderActive(prev_toplevel, false);
+                } else {
+                    std.log.warn("Previous surface has no xdg_surface.data", .{});
+                }
+            } else {
+                std.log.warn("Could not get XdgSurface from previous surface", .{});
             }
         } else {
             std.log.info("No previous focused surface", .{});
         }
 
+        std.log.info("Rearranging toplevel list, moving toplevel {*} to front", .{toplevel});
         toplevel.scene_tree.node.raiseToTop();
-        toplevel.link.remove();
+        // Only remove if currently in the list (defensive programming)
+        if (isToplevelInServerList(server, toplevel)) {
+            toplevel.link.remove();
+        }
         server.toplevels.prepend(toplevel);
 
+        std.log.info("Setting current window activated", .{});
         _ = toplevel.xdg_toplevel.setActivated(true);
         Server.setBorderActive(toplevel, true); // Make the border of the focused window active
 
-        const wlr_keyboard = server.seat.getKeyboard() orelse return;
-        server.seat.keyboardNotifyEnter(
-            surface,
-            wlr_keyboard.keycodes[0..wlr_keyboard.num_keycodes],
-            &wlr_keyboard.modifiers,
-        );
+        if (server.seat.getKeyboard()) |wlr_keyboard| {
+            std.log.info("Sending keyboard focus notification", .{});
+            server.seat.keyboardNotifyEnter(
+                surface,
+                wlr_keyboard.keycodes[0..wlr_keyboard.num_keycodes],
+                &wlr_keyboard.modifiers,
+            );
+        } else {
+            std.log.warn("No keyboard available for focus notification", .{});
+        }
 
         if (rearrange) {
-            // Rearange after focus change
+            std.log.info("Rearranging windows after focus change", .{});
             server.arrangeWindows();
         }
+        std.log.info("focusView completed", .{});
+    }
+    
+    // Helper function to check if toplevel is already in the server's list
+    fn isToplevelInServerList(server: *Server, toplevel: *Toplevel) bool {
+        var it = server.toplevels.iterator(.forward);
+        while (it.next()) |list_toplevel| {
+            if (list_toplevel == toplevel) {
+                return true;
+            }
+        }
+        return false;
     }
 
     fn newInput(listener: *wl.Listener(*wlr.InputDevice), device: *wlr.InputDevice) void {
@@ -815,7 +913,7 @@ pub const Server = struct {
                 }
 
                 var current_geometry: wlr.Box = undefined;
-                toplevel.xdg_toplevel.base.getGeometry(&current_geometry);
+                current_geometry = toplevel.xdg_toplevel.base.current.geometry;
                 toplevel.x = new_left - current_geometry.x;
                 toplevel.y = new_top - current_geometry.y;
                 toplevel.scene_tree.node.setPosition(toplevel.x, toplevel.y);
@@ -838,6 +936,11 @@ pub const Server = struct {
         _ = server.seat.pointerNotifyButton(event.time_msec, event.button, event.state);
         if (event.state == .released) {
             server.cursor_mode = .passthrough;
+            
+            // Focus the window under the cursor when clicking, but without rearranging
+            if (server.viewAt(server.cursor.x, server.cursor.y)) |res| {
+                server.focusView(res.toplevel, res.surface, false);
+            }
         }
         // Removed focusView call to prevent window rearrangement on mouse click
     }

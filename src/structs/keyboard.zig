@@ -140,24 +140,45 @@ pub const Keyboard = struct {
 
         switch (action) {
             .focus_next => {
-                if (keyboard.server.toplevels.length() < 2) return;
+                std.log.info("Focus next action triggered, total toplevels: {}", .{keyboard.server.toplevels.length()});
+                if (keyboard.server.toplevels.length() < 2) {
+                    std.log.info("Not enough windows to focus next", .{});
+                    return;
+                }
                 // Focus the next window (second in list since first is current focus)
                 var it = keyboard.server.toplevels.iterator(.forward);
-                _ = it.next(); // Skip the currently focused window
+                const current_toplevel = it.next();
+                std.log.info("Current focused toplevel: {*}", .{current_toplevel});
+                if (current_toplevel) |_| {
+                    _ = it.next(); // Skip the currently focused window
+                }
                 if (it.next()) |next_toplevel| {
+                    std.log.info("Focusing next toplevel at {*}", .{next_toplevel});
                     keyboard.server.focusView(next_toplevel, next_toplevel.xdg_toplevel.base.surface, true);
+                } else {
+                    std.log.info("No next toplevel found", .{});
                 }
             },
             .focus_prev => {
-                if (keyboard.server.toplevels.length() < 2) return;
+                std.log.info("Focus prev action triggered, total toplevels: {}", .{keyboard.server.toplevels.length()});
+                if (keyboard.server.toplevels.length() < 2) {
+                    std.log.info("Not enough windows to focus prev", .{});
+                    return;
+                }
                 // Focus the previous window (last in list - cycles back to end)
                 var prev_toplevel: ?*Toplevel = null;
                 var it = keyboard.server.toplevels.iterator(.forward);
+                var count: usize = 0;
                 while (it.next()) |toplevel| {
                     prev_toplevel = toplevel;
+                    count += 1;
                 }
+                std.log.info("Found {} toplevels, focusing last one", .{count});
                 if (prev_toplevel) |toplevel| {
+                    std.log.info("Focusing previous toplevel at {*}", .{toplevel});
                     keyboard.server.focusView(toplevel, toplevel.xdg_toplevel.base.surface, true);
+                } else {
+                    std.log.info("No previous toplevel found", .{});
                 }
             },
             .focus_left, .focus_right => {
@@ -165,25 +186,36 @@ pub const Keyboard = struct {
                 std.log.info("Directional focus not yet implemented", .{});
             },
             .close_window => {
-                if (keyboard.server.toplevels.length() == 0) return;
+                std.log.info("Close window action triggered", .{});
+                if (keyboard.server.toplevels.length() == 0) {
+                    std.log.info("No windows to close", .{});
+                    return;
+                }
                 // Close the currently focused window (first in list)
                 var it = keyboard.server.toplevels.iterator(.forward);
                 if (it.next()) |toplevel| {
+                    std.log.info("Sending close request to toplevel at {*}, xdg_toplevel at {*}", .{ toplevel, toplevel.xdg_toplevel });
                     toplevel.xdg_toplevel.sendClose();
+                } else {
+                    std.log.info("No toplevel found to close", .{});
                 }
             },
             .increase_ratio => {
+                std.log.info("Increasing master ratio from {} to {}", .{ keyboard.server.config.master_ratio, @min(0.9, keyboard.server.config.master_ratio + 0.05) });
                 keyboard.server.config.master_ratio = @min(0.9, keyboard.server.config.master_ratio + 0.05);
                 keyboard.server.arrangeWindows();
             },
             .decrease_ratio => {
+                std.log.info("Decreasing master ratio from {} to {}", .{ keyboard.server.config.master_ratio, @max(0.1, keyboard.server.config.master_ratio - 0.05) });
                 keyboard.server.config.master_ratio = @max(0.1, keyboard.server.config.master_ratio - 0.05);
                 keyboard.server.arrangeWindows();
             },
             .quit => {
+                std.log.info("Quit action triggered", .{});
                 keyboard.server.wl_server.terminate();
             },
             .reload_config => {
+                std.log.info("Reload config action triggered", .{});
                 keyboard.server.reloadConfig() catch |err| {
                     std.log.err("Failed to reload config: {}", .{err});
                 };

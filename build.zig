@@ -46,7 +46,7 @@ pub fn build(b: *std.Build) void {
     // exposed to the wlroots module for @cImport() to work. This seems to be
     // the best way to do so with the current std.Build API.
     wlroots.resolved_target = target;
-    wlroots.linkSystemLibrary("wlroots-0.18", .{});
+    wlroots.linkSystemLibrary("wlroots-0.19", .{});
 
     const zwm = b.addExecutable(.{
         .name = "zwm",
@@ -64,6 +64,8 @@ pub fn build(b: *std.Build) void {
     zwm.root_module.addImport("wlroots", wlroots);
     zwm.root_module.addImport("kdl", kdl);
     zwm.linkSystemLibrary("glesv2");
+    zwm.linkSystemLibrary("scenefx-0.4");
+    zwm.addIncludePath(.{ .cwd_relative = "/usr/include/scenefx-0.4" });
 
     zwm.linkSystemLibrary("wayland-server");
     zwm.linkSystemLibrary("xkbcommon");
