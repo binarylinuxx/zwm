@@ -63,6 +63,11 @@ pub const Server = struct {
     screencopy_manager: *wlr.ScreencopyManagerV1,
     screencopy_frame: wl.Listener(*wlr.ScreencopyFrameV1) = .init(handleScreencopyFrame),
 
+    // Input method support
+    input_method_manager: *wlr.InputMethodManagerV2,
+    text_input_manager: *wlr.TextInputManagerV3,
+    virtual_keyboard_manager: *wlr.VirtualKeyboardManagerV1,
+
     seat: *wlr.Seat,
     new_input: wl.Listener(*wlr.InputDevice) = .init(newInput),
     request_set_cursor: wl.Listener(*wlr.Seat.event.RequestSetCursor) = .init(requestSetCursor),
@@ -112,6 +117,11 @@ pub const Server = struct {
         const screencopy_manager = try wlr.ScreencopyManagerV1.create(wl_server);
         const xdg_output_manager = try wlr.XdgOutputManagerV1.create(wl_server, output_layout);
 
+        // Create input method and text input managers
+        const input_method_manager = try wlr.InputMethodManagerV2.create(wl_server);
+        const text_input_manager = try wlr.TextInputManagerV3.create(wl_server);
+        const virtual_keyboard_manager = try wlr.VirtualKeyboardManagerV1.create(wl_server);
+
         // Create layer subtrees
         var layer_trees: [5]*wlr.SceneTree = undefined;
         inline for (std.meta.fields(Layer)) |field| {
@@ -139,6 +149,9 @@ pub const Server = struct {
             .cursor_mgr = try wlr.XcursorManager.create(null, 24),
             .layer_trees = layer_trees,
             .screencopy_manager = screencopy_manager,
+            .input_method_manager = input_method_manager,
+            .text_input_manager = text_input_manager,
+            .virtual_keyboard_manager = virtual_keyboard_manager,
             .wayland_display = "",
         };
         
@@ -149,6 +162,13 @@ pub const Server = struct {
         _ = try wlr.Compositor.create(server.wl_server, 6, server.renderer);
         _ = try wlr.Subcompositor.create(server.wl_server);
         _ = try wlr.DataDeviceManager.create(server.wl_server);
+
+        // Additional protocols for better compatibility
+        _ = try wlr.DataControlManagerV1.create(server.wl_server);
+        _ = try wlr.PrimarySelectionDeviceManagerV1.create(server.wl_server);
+        _ = try wlr.Viewporter.create(server.wl_server);
+        _ = try wlr.SinglePixelBufferManagerV1.create(server.wl_server);
+        _ = try wlr.FractionalScaleManagerV1.create(server.wl_server, 1);
 
         server.backend.events.new_output.add(&server.new_output);
 
@@ -657,13 +677,40 @@ pub const Server = struct {
     fn newXdgPopup(_: *wl.Listener(*wlr.XdgPopup), xdg_popup: *wlr.XdgPopup) void {
         const xdg_surface = xdg_popup.base;
 
-        const parent = wlr.XdgSurface.tryFromWlrSurface(xdg_popup.parent.?) orelse return;
-        const parent_tree = if (parent.data) |data|
-            @as(*wlr.SceneTree, @ptrCast(@alignCast(data)))
-        else {
+        // Try to get the parent surface
+        const parent_surface = xdg_popup.parent orelse {
+            std.log.err("xdg popup has no parent surface", .{});
             return;
         };
-        const scene_tree = parent_tree.createSceneXdgSurface(xdg_surface) catch {
+
+        // Find the parent scene tree - could be from toplevel, layer surface, or another popup
+        var parent_tree: ?*wlr.SceneTree = null;
+
+        // First, try to get parent as XDG surface (toplevels and other popups)
+        if (wlr.XdgSurface.tryFromWlrSurface(parent_surface)) |parent_xdg| {
+            if (parent_xdg.data) |data| {
+                // For toplevels, data points to the Toplevel struct, we need the scene_tree
+                if (parent_xdg.role == .toplevel) {
+                    const toplevel = @as(*Toplevel, @ptrCast(@alignCast(data)));
+                    parent_tree = toplevel.scene_tree;
+                } else {
+                    // For popups and other XDG surfaces, data is the scene tree
+                    parent_tree = @as(*wlr.SceneTree, @ptrCast(@alignCast(data)));
+                }
+            }
+        } else {
+            // Parent might be a layer surface - check if it has layer surface data
+            // Layer surfaces store their scene tree in a different way
+            // We need to search through the scene graph to find the parent
+            std.log.warn("popup parent is not an XDG surface, attempting fallback", .{});
+        }
+
+        if (parent_tree == null) {
+            std.log.err("could not find parent scene tree for popup", .{});
+            return;
+        }
+
+        const scene_tree = parent_tree.?.createSceneXdgSurface(xdg_surface) catch {
             std.log.err("failed to allocate xdg popup node", .{});
             return;
         };
@@ -678,7 +725,12 @@ pub const Server = struct {
         };
 
         xdg_surface.surface.events.commit.add(&popup.commit);
+        xdg_surface.surface.events.map.add(&popup.map);
+        xdg_surface.surface.events.unmap.add(&popup.unmap);
         xdg_popup.events.destroy.add(&popup.destroy);
+        xdg_popup.base.events.new_popup.add(&popup.new_popup);
+
+        std.log.info("created xdg popup successfully", .{});
     }
 
     const ViewAtResult = struct {
