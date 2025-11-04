@@ -1,4 +1,7 @@
 # zwm
+[![Last Commit](https://img.shields.io/github/last-commit/binarylinuxx/zwm)](https://codeberg.org/blx/zwm)
+[![GitHub Stars](https://img.shields.io/github/stars/binarylinuxx/zwm?style=social)](https://github.com/binarylinuxx/zwm)
+[![Codeberg Stars](https://img.shields.io/badge/dynamic/json?color=success&label=Codeberg%20Stars&query=stars&url=https%3A%2F%2Fcodeberg.org%2Fapi%2Fvepos%2Fblx%2Fzwm)](https://codeberg.org/blx/zwm)
 *ziged wlroots tiling Wayland Compositor*
 
 # Info
@@ -26,6 +29,10 @@ always seen those eye candy compositors and they always uses C/++ and im decided
 **Current project status:**
 - zwm are very young expect many issues and bugs
 - if you willing contribute submit pull request explain what enchanced
+
+**Recomended Commit tags for PR(pull request):**
+- New feature "FT|FEATURE: <short description of your new feature>"
+- BugFix "BUG|BUGFIX: <short description of your new Bugfix>"
 
 # Building and testing
 
