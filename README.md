@@ -1,7 +1,8 @@
 # zwm
 [![Last Commit](https://img.shields.io/github/last-commit/binarylinuxx/zwm)](https://codeberg.org/blx/zwm)
 [![GitHub Stars](https://img.shields.io/github/stars/binarylinuxx/zwm?style=social)](https://github.com/binarylinuxx/zwm)
-[![Codeberg Stars](https://img.shields.io/badge/dynamic/json?color=success&label=Codeberg%20Stars&query=stars&url=https%3A%2F%2Fcodeberg.org%2Fapi%2Fvepos%2Fblx%2Fzwm)](https://codeberg.org/blx/zwm)
+[![Codeberg Stars](https://img.shields.io/badge/dynamic/json?color=success&label=Codeberg%20Stars&query=stars_count&url=https%3A%2F%2Fcodeberg.org%2Fapi%2Fv1%2Frepos%2Fblx%2Fzwm&logo=codeberg)](https://codeberg.org/blx/zwm)
+
 *ziged wlroots tiling Wayland Compositor*
 
 # Info
