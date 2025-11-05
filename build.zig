@@ -10,6 +10,7 @@ pub fn build(b: *std.Build) void {
     scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml");
     scanner.addSystemProtocol("unstable/xdg-decoration/xdg-decoration-unstable-v1.xml");
     scanner.addSystemProtocol("stable/tablet/tablet-v2.xml");
+    scanner.addCustomProtocol(b.path("protocols/server-decoration.xml"));
     scanner.addCustomProtocol(b.path("protocols/wlr-layer-shell-unstable-v1.xml"));
     scanner.addCustomProtocol(b.path("protocols/wlr-screencopy-unstable-v1.xml"));
     scanner.addCustomProtocol(b.path("protocols/xdg-output-unstable-v1.xml"));
@@ -27,6 +28,7 @@ pub fn build(b: *std.Build) void {
     scanner.generate("wl_data_device_manager", 3);
     scanner.generate("xdg_wm_base", 2);
     scanner.generate("zxdg_decoration_manager_v1", 1);
+    scanner.generate("org_kde_kwin_server_decoration_manager", 1);
     scanner.generate("zwp_tablet_manager_v2", 1);
     scanner.generate("zwlr_layer_shell_v1", 4);
     scanner.generate("zwlr_screencopy_manager_v1", 3);
@@ -48,10 +50,11 @@ pub fn build(b: *std.Build) void {
     wlroots.resolved_target = target;
     wlroots.linkSystemLibrary("wlroots-0.19", .{});
 
+    // Build zwm compositor
     const zwm = b.addExecutable(.{
         .name = "zwm",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/zwm.zig"),
+            .root_source_file = b.path("src/zwm/main.zig"),
             .target = target,
             .optimize = optimize,
         }),
@@ -74,4 +77,24 @@ pub fn build(b: *std.Build) void {
     zwm.linkSystemLibrary("glesv2");
 
     b.installArtifact(zwm);
+
+    // Build zwmctl control tool
+    const zwmctl = b.addExecutable(.{
+        .name = "zwmctl",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/zwmctl/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    zwmctl.linkLibC();
+
+    // Add shared IPC protocol module
+    const ipc_module = b.createModule(.{
+        .root_source_file = b.path("src/zwm/ipc/protocol.zig"),
+    });
+    zwmctl.root_module.addImport("shared", ipc_module);
+
+    b.installArtifact(zwmctl);
 }

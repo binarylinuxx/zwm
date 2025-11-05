@@ -93,6 +93,7 @@ pub const Action = enum {
     quit,
     reload_config,
     spawn,
+    switch_workspace,
 };
 
 // Key binding structure

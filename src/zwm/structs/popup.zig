@@ -51,6 +51,14 @@ pub const Popup = struct {
         };
         xdg_surface.data = scene_tree;
 
+        // Inherit the parent popup's toplevel data
+        if (parent_tree.node.data) |data| {
+            scene_tree.node.data = data;
+        }
+
+        scene_tree.node.setEnabled(true);
+        scene_tree.node.raiseToTop();
+
         // Create nested popup struct
         const popup = gpa.create(Popup) catch {
             std.log.err("failed to allocate nested popup", .{});

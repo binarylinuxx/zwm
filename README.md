@@ -32,8 +32,9 @@ always seen those eye candy compositors and they always uses C/++ and im decided
 - if you willing contribute submit pull request explain what enchanced
 
 **Recomended Commit tags for PR(pull request):**
-- New feature "FT|FEATURE: <short description of your new feature>"
-- BugFix "BUG|BUGFIX: <short description of your new Bugfix>"
+- New feature "FT|FEATURE: short description of your new feature"
+- BugFix "BUG|BUGFIX: short description of your new Bugfix"
+- Edited README "EDIT: readme updates"
 
 # Building and testing
 

@@ -4,12 +4,14 @@
     "exclusive": true,
     "height": 20,
     "modules-left": ["sway/workspaces", "sway/mode"],
-    "modules-center": ["sway/window"],
+    "modules-center": ["custom/window"],
     "modules-right": ["clock", "tray"],
-    "sway/workspaces": {
-        "disable-scroll": true
+    "custom/window": {
+      "exec": "zwmctl --active-window",
+      "format": "{}",
+      "interval": 1
     },
     "clock": {
         "format": "{:%I:%M - %A %d/%m/%Y}"
-    }
+    },
 }

@@ -51,6 +51,8 @@ pub fn main() anyerror!void {
         var env_map = try std.process.getEnvMap(gpa);
         defer env_map.deinit();
         try env_map.put("WAYLAND_DISPLAY", socket);
+        // Force server-side decorations for GTK apps (including Firefox)
+        try env_map.put("GTK_CSD", "0");
         child.env_map = &env_map;
         try child.spawn();
     }

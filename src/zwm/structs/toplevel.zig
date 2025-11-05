@@ -12,6 +12,7 @@ const scenefx = @import("../render/scenefx.zig");
 pub const Toplevel = struct {
     server: *Server,
     link: wl.list.Link = undefined,
+    workspace_link: wl.list.Link = undefined,
     xdg_toplevel: *wlr.XdgToplevel,
     scene_tree: *wlr.SceneTree,
 
@@ -22,6 +23,7 @@ pub const Toplevel = struct {
 
     x: i32 = 0,
     y: i32 = 0,
+    workspace: ?*@import("workspace.zig").Workspace = null,
 
     commit: wl.Listener(*wlr.Surface) = .init(handleCommit),
     map: wl.Listener(void) = .init(handleMap),
@@ -34,6 +36,7 @@ pub const Toplevel = struct {
         const toplevel: *Toplevel = @fieldParentPtr("commit", listener);
         if (toplevel.xdg_toplevel.base.initial_commit) {
             _ = toplevel.xdg_toplevel.setSize(0, 0);
+            _ = toplevel.xdg_toplevel.base.scheduleConfigure();
         }
 
         // Update border when window geometry changes
@@ -121,10 +124,16 @@ pub const Toplevel = struct {
         if (!isToplevelInList(toplevel.server, toplevel)) {
             std.log.info("Adding new toplevel to server list", .{});
             toplevel.server.toplevels.prepend(toplevel);
+
+            // Add to active workspace
+            if (toplevel.server.active_workspace) |workspace| {
+                workspace.addToplevel(toplevel);
+                std.log.info("Added toplevel to workspace {d}", .{workspace.id});
+            }
         } else {
             std.log.info("Toplevel already in server list, not adding again", .{});
         }
-        
+
         std.log.info("Calling focusView for mapped toplevel", .{});
         toplevel.server.focusView(toplevel, toplevel.xdg_toplevel.base.surface, true);
         // Rearrange windows when a new one is mapped
@@ -190,6 +199,12 @@ pub const Toplevel = struct {
         if (toplevel.server.master_toplevel != null and toplevel.server.master_toplevel.? == toplevel) {
             std.log.info("Clearing master toplevel reference", .{});
             toplevel.server.master_toplevel = null;
+        }
+
+        // Remove from workspace
+        if (toplevel.workspace) |workspace| {
+            workspace.removeToplevel(toplevel);
+            std.log.info("Removed toplevel from workspace {d}", .{workspace.id});
         }
 
         // Only remove from list if currently in the list (defensive programming)

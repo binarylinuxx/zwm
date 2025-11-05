@@ -8,6 +8,11 @@ const zwlr = @import("wayland").server.zwlr;
 const wlr = @import("wlroots");
 const xkb = @import("xkbcommon");
 
+const c = @cImport({
+    @cDefine("WLR_USE_UNSTABLE", "1");
+    @cInclude("wlr/types/wlr_server_decoration.h");
+});
+
 const gpa = std.heap.c_allocator;
 
 const Layer = @import("../structs/layer.zig").Layer;
@@ -17,6 +22,7 @@ const Output = @import("../structs/output.zig").Output;
 const Animation = @import("../animation/animation.zig").Animation;
 const Popup = @import("../structs/popup.zig").Popup;
 const Keyboard = @import("../structs/keyboard.zig").Keyboard;
+const Workspace = @import("../structs/workspace.zig").Workspace;
 const config_parser = @import("../config_parser.zig");
 const Config = config_parser.Config;
 const scenefx = @import("../render/scenefx.zig");
@@ -29,6 +35,7 @@ const easeCubicBezier = @import("../utils/easing.zig").easeCubicBezier;
 const springInterpolate = @import("../utils/easing.zig").springInterpolate;
 
 const FXRenderer = @import("../render/fx_renderer.zig").FXRenderer;
+const ipc_server = @import("ipc_server.zig");
 
 pub const Server = struct {
     // Runtime configuration
@@ -57,6 +64,8 @@ pub const Server = struct {
 
     xdg_decoration_manager: *wlr.XdgDecorationManagerV1,
     new_xdg_toplevel_decoration: wl.Listener(*wlr.XdgToplevelDecorationV1) = .init(newXdgToplevelDecoration),
+
+    server_decoration_manager: *c.wlr_server_decoration_manager,
 
     xdg_output_manager: *wlr.XdgOutputManagerV1,
 
@@ -89,14 +98,26 @@ pub const Server = struct {
     grab_box: wlr.Box = undefined,
     resize_edges: wlr.Edges = .{},
 
+    // Track the surface the pointer is currently on
+    pointer_surface: ?*wlr.Surface = null,
+
     wayland_display: []const u8,
 
     // Layout state
     master_toplevel: ?*Toplevel = null, // Track master window separately
 
+    // Workspace management
+    workspaces: wl.list.Head(Workspace, .link) = undefined,
+    active_workspace: ?*Workspace = null,
+    next_workspace_id: u32 = 1,
+
     // Animation management
     animations: wl.list.Head(Animation, .link) = undefined,
     animation_timer: *wl.EventSource = undefined,
+
+    // IPC server
+    ipc_socket: ?std.net.Server = null,
+    ipc_socket_source: ?*wl.EventSource = null,
 
     // Config file watching
     config_watch_fd: i32 = -1,
@@ -114,6 +135,7 @@ pub const Server = struct {
         const output_layout = try wlr.OutputLayout.create(wl_server);
         const scene = try wlr.Scene.create();
         const xdg_decoration_manager = try wlr.XdgDecorationManagerV1.create(wl_server);
+        const server_decoration_manager = c.wlr_server_decoration_manager_create(@ptrCast(wl_server)) orelse return error.ServerDecorationManagerFailed;
         const screencopy_manager = try wlr.ScreencopyManagerV1.create(wl_server);
         const xdg_output_manager = try wlr.XdgOutputManagerV1.create(wl_server, output_layout);
 
@@ -142,6 +164,7 @@ pub const Server = struct {
             .scene_output_layout = try scene.attachOutputLayout(output_layout),
             .xdg_shell = try wlr.XdgShell.create(wl_server, 2),
             .xdg_decoration_manager = xdg_decoration_manager,
+            .server_decoration_manager = server_decoration_manager,
             .layer_shell = try wlr.LayerShellV1.create(wl_server, 4),
             .xdg_output_manager = xdg_output_manager,
             .seat = try wlr.Seat.create(wl_server, "default"),
@@ -187,6 +210,9 @@ pub const Server = struct {
         // Add XDG decoration manager event listener
         server.xdg_decoration_manager.events.new_toplevel_decoration.add(&server.new_xdg_toplevel_decoration);
 
+        // Set KDE server decoration manager default mode to server-side decorations
+        c.wlr_server_decoration_manager_set_default_mode(server.server_decoration_manager, c.WLR_SERVER_DECORATION_MANAGER_MODE_SERVER);
+
         server.backend.events.new_input.add(&server.new_input);
         server.seat.events.request_set_cursor.add(&server.request_set_cursor);
         server.seat.events.request_set_selection.add(&server.request_set_selection);
@@ -206,6 +232,13 @@ pub const Server = struct {
         // Initialize animations list
         server.animations.init();
 
+        // Initialize workspaces
+        server.workspaces.init();
+        const initial_workspace = try Workspace.init(gpa, server, 1, null);
+        server.workspaces.append(initial_workspace);
+        server.active_workspace = initial_workspace;
+        std.log.info("Created initial workspace 1", .{});
+
         // Animation timer will be managed to only run when needed for cleanup
         server.animation_timer = try wl.EventLoop.addTimer(
             loop,
@@ -220,6 +253,9 @@ pub const Server = struct {
 
         // Set up config file watching
         try server.setupConfigWatch(loop);
+
+        // Set up IPC server
+        try ipc_server.setupIPCServer(server, loop);
 
         // Initialize FX renderer
         server.fx_renderer = try FXRenderer.init(gpa);
@@ -408,6 +444,9 @@ pub const Server = struct {
     }
 
     pub fn arrangeWindows(server: *Server) void {
+        // Only arrange windows from the active workspace
+        const active_workspace = server.active_workspace orelse return;
+
         var output_it = server.output_layout.outputs.iterator(.forward);
         while (output_it.next()) |layout_output| {
             const output = @as(*Output, @ptrCast(@alignCast(layout_output.output.data)));
@@ -424,7 +463,8 @@ pub const Server = struct {
             var toplevels_on_output = std.ArrayList(*Toplevel).init(gpa);
             defer toplevels_on_output.deinit();
 
-            var toplevel_it = server.toplevels.iterator(.forward);
+            // Only iterate through toplevels in the active workspace
+            var toplevel_it = active_workspace.getToplevelIterator();
             while (toplevel_it.next()) |toplevel| {
                 const toplevel_geometry = toplevel.xdg_toplevel.base.current.geometry;
 
@@ -453,7 +493,8 @@ pub const Server = struct {
                 const stack_width = usable_width - master_width - server.config.gap_size;
 
                 var master: ?*Toplevel = null;
-                if (server.master_toplevel) |m| {
+                // Use the workspace's master_toplevel instead of server's
+                if (active_workspace.master_toplevel) |m| {
                     for (toplevels_on_output.items) |t| {
                         if (t == m) {
                             master = m;
@@ -464,7 +505,8 @@ pub const Server = struct {
 
                 if (master == null) {
                     master = toplevels_on_output.items[0];
-                    server.master_toplevel = master;
+                    active_workspace.master_toplevel = master;
+                    server.master_toplevel = master; // Keep server reference in sync for compatibility
                 }
 
                 const stack_count = count - 1;
@@ -610,11 +652,15 @@ pub const Server = struct {
     }
 
     fn newXdgToplevelDecoration(_: *wl.Listener(*wlr.XdgToplevelDecorationV1), decoration: *wlr.XdgToplevelDecorationV1) void {
-        // Set decoration mode to server-side (compositor draws the borders, not the client)
-        // In wlroots 0.19, we should not call setMode if the surface is not initialized yet
-        // Let the default behavior handle it, or defer this call
+        // Force server-side decorations (compositor draws borders, not client)
+        // This prevents CSD (client-side decorations) and ensures consistent look
+        std.log.info("XDG decoration created for toplevel", .{});
+
+        // Don't call setMode here - it will be called after surface is initialized
+        // The default is already server-side from our ServerDecorationManager
         _ = decoration;
-        // TODO: Properly handle decoration mode after surface initialization
+
+        std.log.info("Decoration handler completed", .{});
     }
 
     fn newLayerSurface(listener: *wl.Listener(*wlr.LayerSurfaceV1), layer_surface: *wlr.LayerSurfaceV1) void {
@@ -716,6 +762,24 @@ pub const Server = struct {
         };
         xdg_surface.data = scene_tree;
 
+        // Set the popup's scene tree node data to point to the parent toplevel
+        // so viewAt() can find it when walking up the tree
+        if (wlr.XdgSurface.tryFromWlrSurface(parent_surface)) |parent_xdg| {
+            if (parent_xdg.role == .toplevel) {
+                if (parent_xdg.data) |data| {
+                    const toplevel = @as(*Toplevel, @ptrCast(@alignCast(data)));
+                    scene_tree.node.data = @ptrFromInt(@intFromPtr(toplevel));
+                    std.log.info("Set popup scene node data to parent toplevel: {*}", .{toplevel});
+                }
+            }
+        }
+
+        // Enable the popup scene tree node so it's visible
+        scene_tree.node.setEnabled(true);
+        // Raise popup to top so it's above the parent window
+        scene_tree.node.raiseToTop();
+        std.log.info("Popup scene tree created, enabled, and raised to top at {*}", .{scene_tree});
+
         const popup = gpa.create(Popup) catch {
             std.log.err("failed to allocate new popup", .{});
             return;
@@ -730,7 +794,7 @@ pub const Server = struct {
         xdg_popup.events.destroy.add(&popup.destroy);
         xdg_popup.base.events.new_popup.add(&popup.new_popup);
 
-        std.log.info("created xdg popup successfully", .{});
+        std.log.info("created xdg popup successfully at surface: {*}", .{xdg_surface.surface});
     }
 
     const ViewAtResult = struct {
@@ -753,7 +817,36 @@ pub const Server = struct {
                 }
             }
 
-            // Walk up the scene tree to find a toplevel, even if we're hovering over a border
+            // If we found a surface, check if it's a popup
+            // Popups need to be handled differently - we still need the parent toplevel
+            // but we must use the popup's surface for pointer events
+            if (surface) |surf| {
+                // Check if this surface is an XDG surface (could be popup or toplevel)
+                if (wlr.XdgSurface.tryFromWlrSurface(surf)) |xdg_surface| {
+                    // If it's a popup, we need to find the root toplevel for the ViewAtResult
+                    if (xdg_surface.role == .popup) {
+                        // Walk up to find the owning toplevel
+                        var it: ?*wlr.SceneTree = node.parent;
+                        while (it) |n| : (it = n.node.parent) {
+                            if (n.node.data) |data| {
+                                const toplevel = @as(*Toplevel, @ptrCast(@alignCast(data)));
+                                if (!isToplevelInServerList(server, toplevel)) {
+                                    return null;
+                                }
+                                // Return popup's surface, not toplevel's
+                                return ViewAtResult{
+                                    .toplevel = toplevel,
+                                    .surface = surf,
+                                    .sx = sx,
+                                    .sy = sy,
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Walk up the scene tree to find a toplevel (for normal windows or borders)
             var it: ?*wlr.SceneTree = node.parent;
             while (it) |n| : (it = n.node.parent) {
                 if (n.node.data) |data| {
@@ -918,12 +1011,24 @@ pub const Server = struct {
     fn processCursorMotion(server: *Server, time_msec: u32) void {
         switch (server.cursor_mode) {
             .passthrough => if (server.viewAt(server.cursor.x, server.cursor.y)) |res| {
+                // TinyWL approach: ALWAYS call both enter and motion
+                // wlroots internally avoids sending duplicate events if not needed
                 server.seat.pointerNotifyEnter(res.surface, res.sx, res.sy);
                 server.seat.pointerNotifyMotion(time_msec, res.sx, res.sy);
-                server.focusView(res.toplevel, res.surface, false);
+
+                // Only change keyboard focus when entering a different toplevel surface, not popups
+                if (server.pointer_surface != res.surface) {
+                    if (wlr.XdgSurface.tryFromWlrSurface(res.surface)) |xdg_surface| {
+                        if (xdg_surface.role == .toplevel) {
+                            server.focusView(res.toplevel, res.surface, false);
+                        }
+                    }
+                    server.pointer_surface = res.surface;
+                }
             } else {
                 server.cursor.setXcursor(server.cursor_mgr, "default");
                 server.seat.pointerClearFocus();
+                server.pointer_surface = null;
             },
             .move => {
                 const toplevel = server.grabbed_view.?;
@@ -1152,5 +1257,77 @@ pub const Server = struct {
         std.log.info("Screencopy frame completed successfully", .{});
     }
 
+    // Workspace Management Functions
 
+    pub fn switchToWorkspace(server: *Server, workspace_id: u32) !void {
+        // Check if workspace already exists
+        var workspace_iter = server.workspaces.iterator(.forward);
+        var target_workspace: ?*Workspace = null;
+
+        while (workspace_iter.next()) |ws| {
+            if (ws.id == workspace_id) {
+                target_workspace = ws;
+                break;
+            }
+        }
+
+        // Create workspace if it doesn't exist
+        if (target_workspace == null) {
+            const new_workspace = try Workspace.init(gpa, server, workspace_id, null);
+            server.workspaces.append(new_workspace);
+            target_workspace = new_workspace;
+            std.log.info("Created new workspace {d}", .{workspace_id});
+        }
+
+        if (server.active_workspace == target_workspace) {
+            std.log.info("Already on workspace {d}", .{workspace_id});
+            return;
+        }
+
+        const old_workspace = server.active_workspace;
+        server.active_workspace = target_workspace;
+
+        std.log.info("Switching from workspace {?d} to workspace {d}", .{
+            if (old_workspace) |ws| ws.id else null,
+            workspace_id,
+        });
+
+        // Hide all toplevels from old workspace
+        if (old_workspace) |ws| {
+            var it = ws.getToplevelIterator();
+            while (it.next()) |toplevel| {
+                toplevel.scene_tree.node.setEnabled(false);
+                toplevel.border_container.node.setEnabled(false);
+            }
+        }
+
+        // Show all toplevels from new workspace
+        if (target_workspace) |ws| {
+            var it = ws.getToplevelIterator();
+            while (it.next()) |toplevel| {
+                toplevel.scene_tree.node.setEnabled(true);
+                toplevel.border_container.node.setEnabled(true);
+            }
+
+            // Update master_toplevel reference
+            server.master_toplevel = ws.master_toplevel;
+        }
+
+        // Rearrange windows for the new workspace
+        server.arrangeWindows();
+    }
+
+    pub fn getOrCreateWorkspace(server: *Server, workspace_id: u32) !*Workspace {
+        var workspace_iter = server.workspaces.iterator(.forward);
+        while (workspace_iter.next()) |ws| {
+            if (ws.id == workspace_id) {
+                return ws;
+            }
+        }
+
+        const new_workspace = try Workspace.init(gpa, server, workspace_id, null);
+        server.workspaces.append(new_workspace);
+        std.log.info("Created workspace {d}", .{workspace_id});
+        return new_workspace;
+    }
 };

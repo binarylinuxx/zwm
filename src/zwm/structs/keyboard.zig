@@ -140,13 +140,15 @@ pub const Keyboard = struct {
 
         switch (action) {
             .focus_next => {
-                std.log.info("Focus next action triggered, total toplevels: {}", .{keyboard.server.toplevels.length()});
-                if (keyboard.server.toplevels.length() < 2) {
+                const active_workspace = keyboard.server.active_workspace orelse return;
+                const toplevel_count = active_workspace.getClientCount();
+                std.log.info("Focus next action triggered, total toplevels in workspace: {}", .{toplevel_count});
+                if (toplevel_count < 2) {
                     std.log.info("Not enough windows to focus next", .{});
                     return;
                 }
                 // Focus the next window (second in list since first is current focus)
-                var it = keyboard.server.toplevels.iterator(.forward);
+                var it = active_workspace.getToplevelIterator();
                 const current_toplevel = it.next();
                 std.log.info("Current focused toplevel: {*}", .{current_toplevel});
                 if (current_toplevel) |_| {
@@ -160,14 +162,16 @@ pub const Keyboard = struct {
                 }
             },
             .focus_prev => {
-                std.log.info("Focus prev action triggered, total toplevels: {}", .{keyboard.server.toplevels.length()});
-                if (keyboard.server.toplevels.length() < 2) {
+                const active_workspace = keyboard.server.active_workspace orelse return;
+                const toplevel_count = active_workspace.getClientCount();
+                std.log.info("Focus prev action triggered, total toplevels in workspace: {}", .{toplevel_count});
+                if (toplevel_count < 2) {
                     std.log.info("Not enough windows to focus prev", .{});
                     return;
                 }
                 // Focus the previous window (last in list - cycles back to end)
                 var prev_toplevel: ?*Toplevel = null;
-                var it = keyboard.server.toplevels.iterator(.forward);
+                var it = active_workspace.getToplevelIterator();
                 var count: usize = 0;
                 while (it.next()) |toplevel| {
                     prev_toplevel = toplevel;
@@ -187,12 +191,13 @@ pub const Keyboard = struct {
             },
             .close_window => {
                 std.log.info("Close window action triggered", .{});
-                if (keyboard.server.toplevels.length() == 0) {
+                const active_workspace = keyboard.server.active_workspace orelse return;
+                if (active_workspace.getClientCount() == 0) {
                     std.log.info("No windows to close", .{});
                     return;
                 }
                 // Close the currently focused window (first in list)
-                var it = keyboard.server.toplevels.iterator(.forward);
+                var it = active_workspace.getToplevelIterator();
                 if (it.next()) |toplevel| {
                     std.log.info("Sending close request to toplevel at {*}, xdg_toplevel at {*}", .{ toplevel, toplevel.xdg_toplevel });
                     toplevel.xdg_toplevel.sendClose();
@@ -219,6 +224,10 @@ pub const Keyboard = struct {
                 keyboard.server.reloadConfig() catch |err| {
                     std.log.err("Failed to reload config: {}", .{err});
                 };
+            },
+            .switch_workspace => {
+                // Workspace switching is handled via cmd parameter with workspace ID
+                std.log.info("Switch workspace action (requires cmd parameter)", .{});
             },
             .none, .spawn => {}, // Do nothing (spawn is handled elsewhere)
         }
@@ -262,7 +271,18 @@ pub const Keyboard = struct {
         } else if (std.mem.eql(u8, cmd, "increase_ratio")) {
             keyboard.server.config.master_ratio = @min(0.9, keyboard.server.config.master_ratio + 0.05);
             keyboard.server.arrangeWindows();
-        } else if (std.mem.eql(u8, cmd, "kitty") or 
+        } else if (std.mem.startsWith(u8, cmd, "switch_workspace_")) {
+            // Extract workspace ID from command (e.g., "switch_workspace_1")
+            const workspace_id_str = cmd["switch_workspace_".len..];
+            const workspace_id = std.fmt.parseInt(u32, workspace_id_str, 10) catch {
+                std.log.err("Invalid workspace ID: {s}", .{workspace_id_str});
+                return;
+            };
+            std.log.info("Switching to workspace {d}", .{workspace_id});
+            keyboard.server.switchToWorkspace(workspace_id) catch |err| {
+                std.log.err("Failed to switch workspace: {}", .{err});
+            };
+        } else if (std.mem.eql(u8, cmd, "kitty") or
                    std.mem.eql(u8, cmd, "terminal")) {
             // Launch external command
             keyboard.launchCommand(cmd);
