@@ -1,0 +1,81 @@
+const std = @import("std");
+const posix = std.posix;
+const mem = std.mem;
+
+const wl = @import("wayland").server.wl;
+
+const wlr = @import("wlroots");
+
+const gpa = std.heap.c_allocator;
+
+const Server = @import("../core/server.zig").Server;
+
+pub const Output = struct {
+    server: *Server,
+    wlr_output: *wlr.Output,
+    reserved_area_top: i32 = 0,
+    reserved_area_right: i32 = 0,
+    reserved_area_bottom: i32 = 0,
+    reserved_area_left: i32 = 0,
+
+    frame: wl.Listener(*wlr.Output) = .init(handleFrame),
+    request_state: wl.Listener(*wlr.Output.event.RequestState) = .init(handleRequestState),
+    destroy: wl.Listener(*wlr.Output) = .init(handleDestroy),
+
+    pub fn create(server: *Server, wlr_output: *wlr.Output) !void {
+        const output = try gpa.create(Output);
+
+        output.* = .{
+            .server = server,
+            .wlr_output = wlr_output,
+        };
+        wlr_output.data = output;
+        wlr_output.events.frame.add(&output.frame);
+        wlr_output.events.request_state.add(&output.request_state);
+        wlr_output.events.destroy.add(&output.destroy);
+
+        const layout_output = try server.output_layout.addAuto(wlr_output);
+
+        const scene_output = try server.scene.createSceneOutput(wlr_output);
+        server.scene_output_layout.addOutput(layout_output, scene_output);
+
+        // Initialize OpenGL context for FX renderer on first output
+        if (!server.fx_renderer.initialized) {
+            server.fx_renderer.initializeGL() catch |err| {
+                std.log.err("Failed to initialize FX renderer GL context: {}", .{err});
+            };
+        }
+    }
+
+    fn handleFrame(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
+        const output: *Output = @fieldParentPtr("frame", listener);
+
+        // Update animations before rendering
+        output.server.updateAnimations();
+
+        const scene_output = output.server.scene.getSceneOutput(output.wlr_output).?;
+        _ = scene_output.commit(null);
+
+        var now = posix.clock_gettime(posix.CLOCK.MONOTONIC) catch @panic("CLOCK_MONOTONIC not supported");
+        scene_output.sendFrameDone(&now);
+    }
+
+    fn handleRequestState(
+        listener: *wl.Listener(*wlr.Output.event.RequestState),
+        event: *wlr.Output.event.RequestState,
+    ) void {
+        const output: *Output = @fieldParentPtr("request_state", listener);
+
+        _ = output.wlr_output.commitState(event.state);
+    }
+
+    fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
+        const output: *Output = @fieldParentPtr("destroy", listener);
+
+        output.frame.link.remove();
+        output.request_state.link.remove();
+        output.destroy.link.remove();
+
+        gpa.destroy(output);
+    }
+};

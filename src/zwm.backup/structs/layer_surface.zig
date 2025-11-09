@@ -32,7 +32,6 @@ pub const LayerSurface = struct {
     link: wl.list.Link = undefined,
     layer_surface: *wlr.LayerSurfaceV1,
     scene_layer_surface: *wlr.SceneLayerSurfaceV1,
-    popup_tree: *wlr.SceneTree,  // Separate tree for popups from layer surfaces
     configured: bool = false,
     exclusive_zone: ExclusiveZone = ExclusiveZone{},
 
@@ -135,9 +134,6 @@ pub const LayerSurface = struct {
         layer_surface.destroy.link.remove();
         layer_surface.new_popup.link.remove();
 
-        // Destroy popup tree
-        layer_surface.popup_tree.node.destroy();
-
         gpa.destroy(layer_surface);
     }
 
@@ -145,14 +141,11 @@ pub const LayerSurface = struct {
         const layer_surface: *LayerSurface = @fieldParentPtr("new_popup", listener);
         const xdg_surface = xdg_popup.base;
 
-        // Use the separate popup_tree instead of layer surface's tree
-        const scene_tree = layer_surface.popup_tree.createSceneXdgSurface(xdg_surface) catch {
+        const scene_tree = layer_surface.scene_layer_surface.tree.createSceneXdgSurface(xdg_surface) catch {
             std.log.err("failed to allocate xdg popup node", .{});
             return;
         };
         xdg_surface.data = scene_tree;
-        scene_tree.node.data = @ptrFromInt(@intFromPtr(layer_surface));
-        std.log.info("Created popup {*} for layer surface {*} using popup_tree {*}", .{scene_tree, layer_surface, layer_surface.popup_tree});
 
         const popup = gpa.create(@import("../structs/popup.zig").Popup) catch {
             std.log.err("failed to allocate new popup", .{});
@@ -167,7 +160,6 @@ pub const LayerSurface = struct {
         xdg_surface.surface.events.map.add(&popup.map);
         xdg_surface.surface.events.unmap.add(&popup.unmap);
         xdg_popup.events.destroy.add(&popup.destroy);
-        xdg_popup.events.reposition.add(&popup.reposition);
         xdg_popup.base.events.new_popup.add(&popup.new_popup);
     }
 };

@@ -147,13 +147,9 @@ pub const Config = struct {
     keybinds: std.ArrayList(KeyBind),
     commands: std.ArrayList(Command),
 
-    // XKB settings - all optional, only set what's specified in config
-    xkb_layout: ?[]const u8,
-    xkb_options: ?[]const u8,
-    xkb_model: ?[]const u8,
-    xkb_variant: ?[]const u8,
-    xkb_rules: ?[]const u8,
-    xkb_file: ?[]const u8, // Path to compiled XKB keymap file (takes precedence over other settings)
+    // XKB settings
+    xkb_layout: []const u8,
+    xkb_options: []const u8,
 
     // Environment variables
     environment: std.StringHashMap([]const u8),
@@ -226,16 +222,6 @@ fn parseAction(action_str: []const u8) Action {
     if (std.mem.eql(u8, action_str, "quit")) return .quit;
     if (std.mem.eql(u8, action_str, "reload-config") or std.mem.eql(u8, action_str, "reload_config")) return .reload_config;
     if (std.mem.eql(u8, action_str, "spawn")) return .spawn;
-
-    // Check for workspace switching actions (workspace-1, workspace-2, etc.)
-    if (std.mem.startsWith(u8, action_str, "workspace-")) {
-        return .switch_workspace;
-    }
-
-    // Check for move to workspace actions (move-to-workspace-1, etc.)
-    if (std.mem.startsWith(u8, action_str, "move-to-workspace-")) {
-        return .switch_workspace; // TODO: implement move_to_workspace action
-    }
 
     return .none;
 }
@@ -410,12 +396,8 @@ pub fn loadConfig(allocator: std.mem.Allocator, config_path: []const u8) !Config
         .spring_damping_ratio = 1.0,
         .keybinds = std.ArrayList(KeyBind).init(allocator),
         .commands = std.ArrayList(Command).init(allocator),
-        .xkb_layout = null,
-        .xkb_options = null,
-        .xkb_model = null,
-        .xkb_variant = null,
-        .xkb_rules = null,
-        .xkb_file = null,
+        .xkb_layout = "us",
+        .xkb_options = "",
         .environment = std.StringHashMap([]const u8).init(allocator),
         .allocator = allocator,
     };
@@ -555,17 +537,6 @@ fn parseLayoutNode(node: *const simple_kdl.Node, config: *Config, allocator: std
                         }
                     } else {
                         keybind.action = parseAction(action_node.name);
-
-                        // For workspace actions, extract the workspace ID
-                        if (keybind.action == .switch_workspace) {
-                            if (std.mem.startsWith(u8, action_node.name, "workspace-")) {
-                                const id_str = action_node.name["workspace-".len..];
-                                keybind.cmd = try allocator.dupe(u8, id_str);
-                            } else if (std.mem.startsWith(u8, action_node.name, "move-to-workspace-")) {
-                                const id_str = action_node.name["move-to-workspace-".len..];
-                                keybind.cmd = try allocator.dupe(u8, id_str);
-                            }
-                        }
                     }
                 }
 
@@ -617,14 +588,6 @@ fn parseInputNode(node: *const simple_kdl.Node, config: *Config, allocator: std.
                                 config.xkb_layout = try allocator.dupe(u8, arg);
                             } else if (std.mem.eql(u8, xkb_node.name, "options")) {
                                 config.xkb_options = try allocator.dupe(u8, arg);
-                            } else if (std.mem.eql(u8, xkb_node.name, "model")) {
-                                config.xkb_model = try allocator.dupe(u8, arg);
-                            } else if (std.mem.eql(u8, xkb_node.name, "variant")) {
-                                config.xkb_variant = try allocator.dupe(u8, arg);
-                            } else if (std.mem.eql(u8, xkb_node.name, "rules")) {
-                                config.xkb_rules = try allocator.dupe(u8, arg);
-                            } else if (std.mem.eql(u8, xkb_node.name, "file")) {
-                                config.xkb_file = try allocator.dupe(u8, arg);
                             }
                         }
                     }

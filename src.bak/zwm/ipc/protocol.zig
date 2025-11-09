@@ -16,14 +16,6 @@ pub const MessageType = enum(u32) {
     response_ok,
     response_error,
     response_data,
-
-    // Events (for event stream socket)
-    event_workspace,
-    event_activewindow,
-    event_openwindow,
-    event_closewindow,
-    event_movewindow,
-    event_focusedmon,
 };
 
 /// Maximum message size (64KB)
@@ -55,16 +47,10 @@ pub const WorkspaceInfo = struct {
     is_active: bool,
 };
 
-/// Get the IPC socket path for zwm (command socket)
+/// Get the IPC socket path for zwm
 pub fn getSocketPath(allocator: std.mem.Allocator) ![]const u8 {
     const runtime_dir = std.posix.getenv("XDG_RUNTIME_DIR") orelse "/tmp";
     return std.fmt.allocPrint(allocator, "{s}/zwm-ipc.sock", .{runtime_dir});
-}
-
-/// Get the event stream socket path for zwm
-pub fn getEventSocketPath(allocator: std.mem.Allocator) ![]const u8 {
-    const runtime_dir = std.posix.getenv("XDG_RUNTIME_DIR") orelse "/tmp";
-    return std.fmt.allocPrint(allocator, "{s}/zwm-events.sock", .{runtime_dir});
 }
 
 /// Write a message header to a stream

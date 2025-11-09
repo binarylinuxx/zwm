@@ -14,6 +14,7 @@ pub fn build(b: *std.Build) void {
     scanner.addCustomProtocol(b.path("protocols/wlr-layer-shell-unstable-v1.xml"));
     scanner.addCustomProtocol(b.path("protocols/wlr-screencopy-unstable-v1.xml"));
     scanner.addCustomProtocol(b.path("protocols/xdg-output-unstable-v1.xml"));
+    scanner.addCustomProtocol(b.path("protocols/wlr-foreign-toplevel-management-unstable-v1.xml"));
 
     // Some of these versions may be out of date with what wlroots implements.
     // This is not a problem in practice though as long as zwm successfully compiles.
@@ -33,6 +34,7 @@ pub fn build(b: *std.Build) void {
     scanner.generate("zwlr_layer_shell_v1", 4);
     scanner.generate("zwlr_screencopy_manager_v1", 3);
     scanner.generate("zxdg_output_manager_v1", 3);
+    scanner.generate("zwlr_foreign_toplevel_manager_v1", 3);
 
     const wayland = b.createModule(.{ .root_source_file = scanner.result });
     const xkbcommon = b.dependency("xkbcommon", .{}).module("xkbcommon");

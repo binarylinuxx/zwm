@@ -11,8 +11,6 @@ const xkb = @import("xkbcommon");
 const c = @cImport({
     @cDefine("WLR_USE_UNSTABLE", "1");
     @cInclude("wlr/types/wlr_server_decoration.h");
-    @cInclude("wlr/types/wlr_compositor.h");
-    @cInclude("wlr/types/wlr_subcompositor.h");
 });
 
 const gpa = std.heap.c_allocator;
@@ -587,7 +585,6 @@ pub const Server = struct {
             .server = server,
             .xdg_toplevel = xdg_toplevel,
             .scene_tree = undefined,
-            .popup_tree = undefined,
             .border_container = undefined,
         };
         xdg_surface.data = toplevel;
@@ -598,20 +595,6 @@ pub const Server = struct {
             return;
         };
         toplevel.border_container = border_container;
-
-        // Create a separate popup tree as a sibling to the border container
-        // This ensures popups are rendered above everything and receive input correctly
-        const popup_tree = toplevel.server.layer_trees[@intFromEnum(Layer.app)].createSceneTree() catch {
-            std.log.err("failed to allocate popup tree", .{});
-            return;
-        };
-        toplevel.popup_tree = popup_tree;
-        popup_tree.node.data = @ptrFromInt(@intFromPtr(toplevel));
-        // Start enabled so popups can be found by hit testing
-        popup_tree.node.setEnabled(true);
-        // Raise to top so popups are above the window
-        popup_tree.node.raiseToTop();
-        std.log.info("Created, enabled, and raised popup tree {*} for toplevel {*}", .{popup_tree, toplevel});
 
         // Create the window surface FIRST so borders render on top
         const scene_tree = border_container.createSceneXdgSurface(xdg_surface) catch {
@@ -722,6 +705,13 @@ pub const Server = struct {
     };
     errdefer gpa.destroy(layer_surface_ptr);
 
+    layer_surface_ptr.* = .{
+        .server = server,
+        .layer_surface = layer_surface,
+        .scene_layer_surface = undefined,
+        .configured = false,
+    };
+
     // Map layer-shell protocol layers to our layer trees
     const parent_idx = switch (layer_surface.current.layer) {  // Use current.layer, not pending
         .background => @intFromEnum(Layer.background),
@@ -737,24 +727,7 @@ pub const Server = struct {
         std.log.err("failed to create scene layer surface", .{});
         return;
     };
-
-    // Create a separate popup tree for layer surface popups
-    const popup_tree = parent.createSceneTree() catch {
-        std.log.err("failed to allocate layer surface popup tree", .{});
-        return;
-    };
-    popup_tree.node.data = @ptrFromInt(@intFromPtr(layer_surface_ptr));
-    // Start enabled so popups can be found by hit testing
-    popup_tree.node.setEnabled(true);
-    std.log.info("Created and enabled popup tree {*} for layer surface {*}", .{popup_tree, layer_surface_ptr});
-
-    layer_surface_ptr.* = .{
-        .server = server,
-        .layer_surface = layer_surface,
-        .scene_layer_surface = scene_layer_surface,
-        .popup_tree = popup_tree,
-        .configured = false,
-    };
+    layer_surface_ptr.scene_layer_surface = scene_layer_surface;
 
     // DON'T add to list here - will be added in handleMap
     // server.layer_surfaces.append(layer_surface_ptr); // REMOVE THIS LINE
@@ -790,26 +763,19 @@ pub const Server = struct {
             return;
         };
 
-        // Find the parent popup tree - for toplevels, use popup_tree; for nested popups, use parent popup's tree
+        // Find the parent scene tree - could be from toplevel, layer surface, or another popup
         var parent_tree: ?*wlr.SceneTree = null;
-        var root_tree: ?*wlr.SceneTree = null;  // The root popup tree for positioning
 
         // First, try to get parent as XDG surface (toplevels and other popups)
         if (wlr.XdgSurface.tryFromWlrSurface(parent_surface)) |parent_xdg| {
             if (parent_xdg.data) |data| {
-                // For toplevels, use the dedicated popup_tree
+                // For toplevels, data points to the Toplevel struct, we need the scene_tree
                 if (parent_xdg.role == .toplevel) {
                     const toplevel = @as(*Toplevel, @ptrCast(@alignCast(data)));
-                    parent_tree = toplevel.popup_tree;
-                    root_tree = toplevel.popup_tree;
-                    std.log.info("Creating popup as child of toplevel {*} popup_tree {*}", .{toplevel, parent_tree});
+                    parent_tree = toplevel.scene_tree;
                 } else {
-                    // For nested popups, use the parent popup's scene tree
+                    // For popups and other XDG surfaces, data is the scene tree
                     parent_tree = @as(*wlr.SceneTree, @ptrCast(@alignCast(data)));
-                    // For nested popups, use the parent popup's tree as root_tree
-                    // The parent already knows its root, so we just use it
-                    root_tree = parent_tree;
-                    std.log.info("Creating nested popup as child of popup {*}", .{parent_tree});
                 }
             }
         } else {
@@ -831,23 +797,13 @@ pub const Server = struct {
         xdg_surface.data = scene_tree;
 
         // Set the popup's scene tree node data to point to the parent toplevel
-        // Since we're using a separate popup_tree, the node.data is already set to the toplevel
-        // We just need to ensure the popup inherits it from the popup_tree
+        // so viewAt() can find it when walking up the tree
         if (wlr.XdgSurface.tryFromWlrSurface(parent_surface)) |parent_xdg| {
             if (parent_xdg.role == .toplevel) {
-                // Parent is a toplevel - the popup_tree already has the toplevel as node.data
                 if (parent_xdg.data) |data| {
                     const toplevel = @as(*Toplevel, @ptrCast(@alignCast(data)));
                     scene_tree.node.data = @ptrFromInt(@intFromPtr(toplevel));
                     std.log.info("Set popup scene node data to parent toplevel: {*}", .{toplevel});
-                }
-            } else if (parent_xdg.role == .popup) {
-                // Parent is another popup - inherit the toplevel reference from root_tree
-                if (root_tree) |rt| {
-                    if (rt.node.data) |toplevel_data| {
-                        scene_tree.node.data = toplevel_data;
-                        std.log.info("Set nested popup scene node data to inherit root tree's toplevel: {*}", .{toplevel_data});
-                    }
                 }
             }
         }
@@ -856,28 +812,7 @@ pub const Server = struct {
         scene_tree.node.setEnabled(true);
         // Raise popup to top so it's above the parent window
         scene_tree.node.raiseToTop();
-
-        // IMPORTANT: Ensure the parent popup_tree is also enabled
-        if (parent_tree) |pt| {
-            pt.node.setEnabled(true);
-            pt.node.raiseToTop();
-            std.log.info("Enabled and raised parent popup_tree {*}", .{pt});
-        }
-
-        // Log the popup geometry for debugging
-        var popup_x: c_int = undefined;
-        var popup_y: c_int = undefined;
-        _ = scene_tree.node.coords(&popup_x, &popup_y);
-
-        // Double check popup_tree position
-        if (parent_tree) |pt| {
-            var pt_x: c_int = undefined;
-            var pt_y: c_int = undefined;
-            _ = pt.node.coords(&pt_x, &pt_y);
-            std.log.info("Parent popup_tree at ({d}, {d}), enabled={}", .{pt_x, pt_y, pt.node.enabled});
-        }
-
-        std.log.info("Popup scene tree at coordinates ({d}, {d}), surface: {*}", .{popup_x, popup_y, xdg_surface.surface});
+        std.log.info("Popup scene tree created, enabled, and raised to top at {*}", .{scene_tree});
 
         const popup = gpa.create(Popup) catch {
             std.log.err("failed to allocate new popup", .{});
@@ -892,7 +827,6 @@ pub const Server = struct {
         xdg_surface.surface.events.map.add(&popup.map);
         xdg_surface.surface.events.unmap.add(&popup.unmap);
         xdg_popup.events.destroy.add(&popup.destroy);
-        xdg_popup.events.reposition.add(&popup.reposition);
         xdg_popup.base.events.new_popup.add(&popup.new_popup);
 
         std.log.info("created xdg popup successfully at surface: {*}", .{xdg_surface.surface});
@@ -909,107 +843,8 @@ pub const Server = struct {
         var sx: f64 = undefined;
         var sy: f64 = undefined;
 
-        // FIRST check app layer (toplevels and their popups) - popups must be checked before layer surfaces
-        // since popups can appear over panels/bars and need input priority
-        const app_layer_tree = server.layer_trees[@intFromEnum(Layer.app)];
-        if (app_layer_tree.node.at(lx, ly, &sx, &sy)) |node| {
-            std.log.debug("viewAt: Found node at {d},{d}, enabled={}", .{lx, ly, node.enabled});
-
-            // Try to get the surface from the node
-            // The node could be a buffer directly, or a tree containing buffers
-            var surface: ?*wlr.Surface = null;
-
-            if (node.type == .buffer) {
-                // Direct buffer node - try to get surface from it
-                const scene_buffer = wlr.SceneBuffer.fromNode(node);
-                std.log.debug("viewAt: Node is buffer, got scene_buffer {*}", .{scene_buffer});
-                if (wlr.SceneSurface.tryFromBuffer(scene_buffer)) |scene_surface| {
-                    surface = scene_surface.surface;
-                    std.log.debug("viewAt: Got surface {*} from buffer node", .{scene_surface.surface});
-                } else {
-                    std.log.warn("viewAt: Buffer node but tryFromBuffer returned null", .{});
-                }
-            } else if (node.type == .tree) {
-                // Tree node - need to find the surface buffer inside the tree
-                std.log.debug("viewAt: Node is a tree, searching for surface inside", .{});
-                const scene_tree = wlr.SceneTree.fromNode(node);
-
-                // Iterate through children to find a surface buffer
-                var it = scene_tree.children.iterator(.forward);
-                while (it.next()) |child_node| {
-                    if (child_node.type == .buffer) {
-                        const scene_buffer = wlr.SceneBuffer.fromNode(child_node);
-                        if (wlr.SceneSurface.tryFromBuffer(scene_buffer)) |scene_surface| {
-                            surface = scene_surface.surface;
-                            std.log.info("viewAt: Found surface {*} inside tree node", .{scene_surface.surface});
-                            break;
-                        }
-                    }
-                }
-                if (surface == null) {
-                    std.log.warn("viewAt: Tree node has no surface buffer children", .{});
-                }
-            }
-
-            // If we found a surface, check if it's a popup
-            if (surface) |surf| {
-                std.log.debug("viewAt: Checking surface {*} for XDG role", .{surf});
-                if (wlr.XdgSurface.tryFromWlrSurface(surf)) |xdg_surface| {
-                    std.log.info("viewAt: Surface {*} IS XDG surface, role={}", .{surf, xdg_surface.role});
-                    if (xdg_surface.role == .popup) {
-                        std.log.info("viewAt: Detected POPUP surface at {d},{d}", .{lx, ly});
-                        // Walk up to find the owning toplevel
-                        var it: ?*wlr.SceneTree = node.parent;
-                        while (it) |n| : (it = n.node.parent) {
-                            if (n.node.data) |data| {
-                                const toplevel = @as(*Toplevel, @ptrCast(@alignCast(data)));
-                                if (!isToplevelInServerList(server, toplevel)) {
-                                    return null;
-                                }
-                                std.log.info("viewAt: Returning popup surface with parent toplevel {*}", .{toplevel});
-                                return ViewAtResult{
-                                    .toplevel = toplevel,
-                                    .surface = surf,
-                                    .sx = sx,
-                                    .sy = sy,
-                                };
-                            }
-                        }
-                        std.log.warn("viewAt: Popup found but no parent toplevel in scene tree", .{});
-                    }
-                }
-            }
-
-            // Walk up the scene tree to find a toplevel (for normal windows and subsurfaces)
-            var it: ?*wlr.SceneTree = node.parent;
-            while (it) |n| : (it = n.node.parent) {
-                if (n.node.data) |data| {
-                    const toplevel = @as(*Toplevel, @ptrCast(@alignCast(data)));
-                    if (!isToplevelInServerList(server, toplevel)) {
-                        return null;
-                    }
-                    // IMPORTANT: Use the actual surface we found (could be a subsurface/dropdown)
-                    // not the toplevel's main surface. This ensures pointer events go to
-                    // the correct surface (e.g., GTK dropdown menus)
-                    const final_surface = if (surface) |surf| surf else toplevel.xdg_toplevel.base.surface;
-
-                    // Log if we're returning a subsurface
-                    if (surface != null and surface.? != toplevel.xdg_toplevel.base.surface) {
-                        std.log.info("viewAt: Returning subsurface {*} (not main surface) for toplevel {*}", .{surface.?, toplevel});
-                    }
-
-                    return ViewAtResult{
-                        .toplevel = toplevel,
-                        .surface = final_surface,
-                        .sx = sx,
-                        .sy = sy,
-                    };
-                }
-            }
-        }
-
-        // THEN check layer surfaces from top to bottom
-        // Check layers in order: overlay, top, bottom, background
+        // First, check layer surfaces from top to bottom using the proper wlroots API
+        // Check layers in order: overlay, top, bottom, background (skip app layer for now)
         const layer_order = [_]zwlr.LayerShellV1.Layer{ .overlay, .top, .bottom, .background };
         for (layer_order) |layer| {
             var it = server.layer_surfaces.iterator(.forward);
@@ -1037,6 +872,61 @@ pub const Server = struct {
                     return ViewAtResult{
                         .toplevel = null,
                         .surface = surface,
+                        .sx = sx,
+                        .sy = sy,
+                    };
+                }
+            }
+        }
+
+        // Then check app layer (toplevels and their popups)
+        const app_layer_tree = server.layer_trees[@intFromEnum(Layer.app)];
+        if (app_layer_tree.node.at(lx, ly, &sx, &sy)) |node| {
+            // First try to get the surface if it's a buffer
+            var surface: ?*wlr.Surface = null;
+            if (node.type == .buffer) {
+                const scene_buffer = wlr.SceneBuffer.fromNode(node);
+                if (wlr.SceneSurface.tryFromBuffer(scene_buffer)) |scene_surface| {
+                    surface = scene_surface.surface;
+                }
+            }
+
+            // If we found a surface, check if it's a popup
+            if (surface) |surf| {
+                if (wlr.XdgSurface.tryFromWlrSurface(surf)) |xdg_surface| {
+                    if (xdg_surface.role == .popup) {
+                        // Walk up to find the owning toplevel
+                        var it: ?*wlr.SceneTree = node.parent;
+                        while (it) |n| : (it = n.node.parent) {
+                            if (n.node.data) |data| {
+                                const toplevel = @as(*Toplevel, @ptrCast(@alignCast(data)));
+                                if (!isToplevelInServerList(server, toplevel)) {
+                                    return null;
+                                }
+                                return ViewAtResult{
+                                    .toplevel = toplevel,
+                                    .surface = surf,
+                                    .sx = sx,
+                                    .sy = sy,
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Walk up the scene tree to find a toplevel (for normal windows)
+            var it: ?*wlr.SceneTree = node.parent;
+            while (it) |n| : (it = n.node.parent) {
+                if (n.node.data) |data| {
+                    const toplevel = @as(*Toplevel, @ptrCast(@alignCast(data)));
+                    if (!isToplevelInServerList(server, toplevel)) {
+                        return null;
+                    }
+                    const final_surface = surface orelse toplevel.xdg_toplevel.base.surface;
+                    return ViewAtResult{
+                        .toplevel = toplevel,
+                        .surface = final_surface,
                         .sx = sx,
                         .sy = sy,
                     };
@@ -1148,19 +1038,6 @@ pub const Server = struct {
         return false;
     }
 
-    // Helper function to check if a surface is a subsurface (e.g., GTK dropdowns)
-    fn isSubsurface(surface: *wlr.Surface, parent_toplevel_surface: *wlr.Surface) bool {
-        // First check it's not the main toplevel surface itself
-        if (surface == parent_toplevel_surface) {
-            return false;
-        }
-
-        // Use wlroots Zig binding to check if it's a subsurface
-        // tryFromWlrSurface returns null if the surface is not a subsurface
-        const subsurface = wlr.Subsurface.tryFromWlrSurface(surface);
-        return subsurface != null;
-    }
-
     fn newInput(listener: *wl.Listener(*wlr.InputDevice), device: *wlr.InputDevice) void {
         const server: *Server = @fieldParentPtr("new_input", listener);
         switch (device.type) {
@@ -1221,26 +1098,15 @@ pub const Server = struct {
                 server.seat.pointerNotifyEnter(res.surface, res.sx, res.sy);
                 server.seat.pointerNotifyMotion(time_msec, res.sx, res.sy);
 
-                // Handle focus differently for popups, subsurfaces, layer surfaces, and regular windows
+                // Handle focus differently for popups, layer surfaces, and regular windows
                 const is_popup = isPopupSurface(res.surface);
                 const is_layer_surface = (res.toplevel == null);
-
-                // Check if it's a subsurface (e.g., GTK dropdown)
-                const is_subsurface = if (res.toplevel) |tl|
-                    isSubsurface(res.surface, tl.xdg_toplevel.base.surface)
-                else
-                    false;
-
-                std.log.debug("processCursorMotion: surface={*}, is_popup={}, is_subsurface={}, is_layer={}, toplevel={*}",
-                    .{res.surface, is_popup, is_subsurface, is_layer_surface, res.toplevel});
-
                 if (server.pointer_surface != res.surface) {
                     if (is_layer_surface) {
                         // For layer surfaces (panels, bars), just update pointer - don't change window focus
                         server.pointer_surface = res.surface;
                     } else if (is_popup) {
                         // For popups, send keyboard focus to allow interaction (typing, arrow keys, etc.)
-                        std.log.info("processCursorMotion: Giving focus to POPUP surface {*}", .{res.surface});
                         server.pointer_surface = res.surface;
                         if (server.seat.getKeyboard()) |wlr_keyboard| {
                             server.seat.keyboardNotifyEnter(
@@ -1249,13 +1115,6 @@ pub const Server = struct {
                                 &wlr_keyboard.modifiers,
                             );
                         }
-                    } else if (is_subsurface) {
-                        // For subsurfaces (GTK dropdowns, etc.), update pointer surface but keep keyboard focus on parent
-                        // This allows the dropdown to receive mouse events while keeping keyboard in the main window
-                        std.log.info("processCursorMotion: Pointer over SUBSURFACE (dropdown) {*}", .{res.surface});
-                        server.pointer_surface = res.surface;
-                        // Note: We don't change keyboard focus here - the parent window keeps it
-                        // But pointer events will go to the subsurface (dropdown) for clicking/hovering
                     } else {
                         // For regular windows, only change focus if the TOPLEVEL changed, not just the surface
                         // This prevents refocusing when hovering over different parts of the same window
@@ -1344,21 +1203,12 @@ pub const Server = struct {
         event: *wlr.Pointer.event.Button,
     ) void {
         const server: *Server = @fieldParentPtr("cursor_button", listener);
-
-        // IMPORTANT: Ensure pointer is on the correct surface BEFORE sending button event
-        // This is critical for popups to receive clicks properly
-        if (server.viewAt(server.cursor.x, server.cursor.y)) |res| {
-            // Make sure the pointer is on this surface with correct coordinates
-            server.seat.pointerNotifyEnter(res.surface, res.sx, res.sy);
-            server.seat.pointerNotifyMotion(event.time_msec, res.sx, res.sy);
-
-            // NOW send the button event to the correct surface
-            _ = server.seat.pointerNotifyButton(event.time_msec, event.button, event.state);
-
-            if (event.state == .released) {
-                server.cursor_mode = .passthrough;
-
-                // Handle clicks on popups, layer surfaces, and regular windows differently
+        _ = server.seat.pointerNotifyButton(event.time_msec, event.button, event.state);
+        if (event.state == .released) {
+            server.cursor_mode = .passthrough;
+            
+            // Handle clicks on popups, layer surfaces, and regular windows differently
+            if (server.viewAt(server.cursor.x, server.cursor.y)) |res| {
                 const is_popup = isPopupSurface(res.surface);
                 const is_layer_surface = (res.toplevel == null);
                 if (is_layer_surface) {
@@ -1381,10 +1231,8 @@ pub const Server = struct {
                     }
                 }
             }
-        } else {
-            // No surface under cursor, just send the button event anyway
-            _ = server.seat.pointerNotifyButton(event.time_msec, event.button, event.state);
         }
+        // Removed focusView call to prevent window rearrangement on mouse click
     }
 
     fn cursorAxis(

@@ -51,22 +51,9 @@ pub fn main() anyerror!void {
         var env_map = try std.process.getEnvMap(gpa);
         defer env_map.deinit();
         try env_map.put("WAYLAND_DISPLAY", socket);
-        // Force server-side decorations for GTK apps
+        // Force server-side decorations for GTK apps (including Firefox)
         try env_map.put("GTK_CSD", "0");
-        // Enable Wayland for Firefox/Mozilla apps
-        try env_map.put("MOZ_ENABLE_WAYLAND", "1");
-        // Disable Firefox drawing its own titlebar (this forces it to use compositor decorations)
-        try env_map.put("MOZ_DISABLE_WAYLAND_PROXY", "1");
-        // Additional Firefox Wayland environment variables to enforce server-side decorations
-        try env_map.put("MOZ_USE_XINPUT2", "1");
-        // Force Firefox to request server-side decorations from compositor
-        // Valid values: "client" (force CSD), "system" (request SSD from compositor)
-        try env_map.put("MOZ_GTK_TITLEBAR_DECORATION", "system");
-        // Additional Firefox environment variables for Wayland
-        try env_map.put("MOZ_DBUS_REMOTE_CONTENT_ENABLED", "1");
-        // Force server-side decorations for Qt apps
-        try env_map.put("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1");
-        try env_map.put("QT_QPA_PLATFORM", "wayland");
+    try env_map.put("MOZ_GTK_TITLEBAR_DECORATION", "system");
         child.env_map = &env_map;
         try child.spawn();
     }

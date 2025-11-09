@@ -33,57 +33,7 @@ pub const Keyboard = struct {
 
         const context = xkb.Context.new(.no_flags) orelse return error.ContextFailed;
         defer context.unref();
-
-        // Try to load keymap from file first, otherwise build from rules
-        const keymap = blk: {
-            if (server.config.xkb_file) |file_path| {
-                std.log.info("Loading XKB keymap from file: {s}", .{file_path});
-                const file = std.fs.cwd().openFile(file_path, .{}) catch |err| {
-                    std.log.err("Failed to open XKB file {s}: {}", .{file_path, err});
-                    break :blk null;
-                };
-                defer file.close();
-
-                const file_size = (file.stat() catch |err| {
-                    std.log.err("Failed to stat XKB file: {}", .{err});
-                    break :blk null;
-                }).size;
-
-                // Allocate with +1 for null terminator
-                const contents = gpa.allocSentinel(u8, file_size, 0) catch |err| {
-                    std.log.err("Failed to allocate memory for XKB file: {}", .{err});
-                    break :blk null;
-                };
-                defer gpa.free(contents);
-
-                _ = file.readAll(contents) catch |err| {
-                    std.log.err("Failed to read XKB file: {}", .{err});
-                    break :blk null;
-                };
-
-                break :blk xkb.Keymap.newFromString(context, contents.ptr, .text_v1, .no_flags);
-            } else {
-                // Build keymap from rules (layout, options, etc.)
-                // Note: strings from config parser are already null-terminated since they're duped from KDL strings
-                var rule_names = xkb.RuleNames{
-                    .rules = if (server.config.xkb_rules) |r| @as([*:0]const u8, @ptrCast(r.ptr)) else null,
-                    .model = if (server.config.xkb_model) |m| @as([*:0]const u8, @ptrCast(m.ptr)) else null,
-                    .layout = if (server.config.xkb_layout) |l| @as([*:0]const u8, @ptrCast(l.ptr)) else null,
-                    .variant = if (server.config.xkb_variant) |v| @as([*:0]const u8, @ptrCast(v.ptr)) else null,
-                    .options = if (server.config.xkb_options) |o| @as([*:0]const u8, @ptrCast(o.ptr)) else null,
-                };
-
-                std.log.info("Creating XKB keymap with rules: layout={s}, options={s}, model={s}, variant={s}, rules={s}", .{
-                    if (server.config.xkb_layout) |l| l else "default",
-                    if (server.config.xkb_options) |o| o else "none",
-                    if (server.config.xkb_model) |m| m else "default",
-                    if (server.config.xkb_variant) |v| v else "default",
-                    if (server.config.xkb_rules) |r| r else "default",
-                });
-
-                break :blk xkb.Keymap.newFromNames(context, &rule_names, .no_flags);
-            }
-        } orelse return error.KeymapFailed;
+        const keymap = xkb.Keymap.newFromNames(context, null, .no_flags) orelse return error.KeymapFailed;
         defer keymap.unref();
 
         const wlr_keyboard = device.toKeyboard();
@@ -163,9 +113,6 @@ pub const Keyboard = struct {
                         if (keybind.action == .spawn) {
                             // Spawn action needs the cmd string
                             keyboard.launchCommand(keybind.cmd);
-                        } else if (keybind.action == .switch_workspace) {
-                            // Switch workspace needs cmd string with workspace ID
-                            keyboard.executeActionWithParam(keybind.action, keybind.cmd);
                         } else if (keybind.action != .none) {
                             keyboard.executeAction(keybind.action);
                         } else {
@@ -285,29 +232,7 @@ pub const Keyboard = struct {
             .none, .spawn => {}, // Do nothing (spawn is handled elsewhere)
         }
     }
-
-    // Execute action with parameter (e.g., workspace ID)
-    fn executeActionWithParam(keyboard: *Keyboard, action: Action, param: []const u8) void {
-        std.log.info("Executing action: {} with param: {s}", .{action, param});
-
-        switch (action) {
-            .switch_workspace => {
-                // Extract workspace ID from param (e.g., "workspace-1" -> 1)
-                const workspace_id = std.fmt.parseInt(u32, param, 10) catch {
-                    std.log.err("Invalid workspace ID: {s}", .{param});
-                    return;
-                };
-                std.log.info("Switching to workspace {d}", .{workspace_id});
-                keyboard.server.switchToWorkspace(workspace_id) catch |err| {
-                    std.log.err("Failed to switch workspace: {}", .{err});
-                };
-            },
-            else => {
-                std.log.warn("Action {} does not support parameters", .{action});
-            },
-        }
-    }
-
+    
     // Execute command based on its string identifier
     fn executeCommand(keyboard: *Keyboard, cmd: []const u8) void {
         std.log.info("Executing command: {s}", .{cmd});

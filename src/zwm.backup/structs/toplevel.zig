@@ -15,7 +15,6 @@ pub const Toplevel = struct {
     workspace_link: wl.list.Link = undefined,
     xdg_toplevel: *wlr.XdgToplevel,
     scene_tree: *wlr.SceneTree,
-    popup_tree: *wlr.SceneTree,  // Separate tree for popups, sibling to scene_tree
 
     // Border-related fields
     border_container: *wlr.SceneTree,
@@ -60,10 +59,6 @@ pub const Toplevel = struct {
 
         // Update border container position to match the toplevel
         toplevel.border_container.node.setPosition(x - border_width, y - border_width);
-
-        // Update popup_tree position to match the toplevel (for correct hit testing)
-        toplevel.popup_tree.node.setPosition(x, y);
-        std.log.debug("updateBorder: Positioned popup_tree at ({d}, {d})", .{x, y});
 
         // Create a single border frame rectangle that encompasses the full border area
         // Size: window size + 2*border_width in each dimension
@@ -118,10 +113,9 @@ pub const Toplevel = struct {
         const toplevel: *Toplevel = @fieldParentPtr("map", listener);
         std.log.info("handleMap called for toplevel at {*}, xdg_toplevel at {*}", .{toplevel, toplevel.xdg_toplevel});
 
-        // Make sure the border container and popup_tree are positioned correctly when the window is mapped
+        // Make sure the border container is positioned correctly when the window is mapped
         const border_width = toplevel.server.config.border_width;
         toplevel.border_container.node.setPosition(toplevel.x - border_width, toplevel.y - border_width);
-        toplevel.popup_tree.node.setPosition(toplevel.x, toplevel.y);
 
         // Apply corner radius to the window surface
         toplevel.applyWindowCornerRadius();
@@ -322,10 +316,6 @@ pub const Toplevel = struct {
         // Null out the scene tree data to prevent use-after-free when cursor hovers over destroyed window
         std.log.info("Nulling scene tree data for toplevel {*}", .{ toplevel });
         toplevel.scene_tree.node.data = null;
-
-        // Destroy popup tree
-        std.log.info("Destroying popup tree for toplevel {*}", .{ toplevel });
-        toplevel.popup_tree.node.destroy();
 
         // Destroy border container to clean up ghost borders
         std.log.info("Destroying border container for toplevel {*}", .{ toplevel });

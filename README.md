@@ -39,10 +39,11 @@ always seen those eye candy compositors and they always uses C/++ and im decided
 # Building and testing
 
 *requirements:*
-- zig 0.14.1+ you probably would get it from https://ziglang.org/download/
+- zig 0.14.1 you probably would get it from https://ziglang.org/download/
 - pkg-config
 - make
 - wlroots 0.19
+- SceneFX 0.4.1
 
 *build:*
 ```

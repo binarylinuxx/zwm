@@ -15,7 +15,6 @@ pub const Toplevel = struct {
     workspace_link: wl.list.Link = undefined,
     xdg_toplevel: *wlr.XdgToplevel,
     scene_tree: *wlr.SceneTree,
-    popup_tree: *wlr.SceneTree,  // Separate tree for popups, sibling to scene_tree
 
     // Border-related fields
     border_container: *wlr.SceneTree,
@@ -25,11 +24,6 @@ pub const Toplevel = struct {
     x: i32 = 0,
     y: i32 = 0,
     workspace: ?*@import("workspace.zig").Workspace = null,
-
-    // XDG decoration
-    decoration: ?*wlr.XdgToplevelDecorationV1 = null,
-    request_decoration_mode: wl.Listener(*wlr.XdgToplevelDecorationV1) = .init(handleRequestDecorationMode),
-    destroy_decoration: wl.Listener(*wlr.XdgToplevelDecorationV1) = .init(handleDestroyDecoration),
 
     commit: wl.Listener(*wlr.Surface) = .init(handleCommit),
     map: wl.Listener(void) = .init(handleMap),
@@ -60,10 +54,6 @@ pub const Toplevel = struct {
 
         // Update border container position to match the toplevel
         toplevel.border_container.node.setPosition(x - border_width, y - border_width);
-
-        // Update popup_tree position to match the toplevel (for correct hit testing)
-        toplevel.popup_tree.node.setPosition(x, y);
-        std.log.debug("updateBorder: Positioned popup_tree at ({d}, {d})", .{x, y});
 
         // Create a single border frame rectangle that encompasses the full border area
         // Size: window size + 2*border_width in each dimension
@@ -118,10 +108,9 @@ pub const Toplevel = struct {
         const toplevel: *Toplevel = @fieldParentPtr("map", listener);
         std.log.info("handleMap called for toplevel at {*}, xdg_toplevel at {*}", .{toplevel, toplevel.xdg_toplevel});
 
-        // Make sure the border container and popup_tree are positioned correctly when the window is mapped
+        // Make sure the border container is positioned correctly when the window is mapped
         const border_width = toplevel.server.config.border_width;
         toplevel.border_container.node.setPosition(toplevel.x - border_width, toplevel.y - border_width);
-        toplevel.popup_tree.node.setPosition(toplevel.x, toplevel.y);
 
         // Apply corner radius to the window surface
         toplevel.applyWindowCornerRadius();
@@ -150,18 +139,6 @@ pub const Toplevel = struct {
         // Rearrange windows when a new one is mapped
         toplevel.server.arrangeWindows();
         std.log.info("handleMap completed for toplevel at {*}", .{toplevel});
-
-        // Broadcast window open event
-        {
-            const ipc_server = @import("../core/ipc_server.zig");
-            var event_payload = std.ArrayList(u8).init(gpa);
-            defer event_payload.deinit();
-            const title = if (toplevel.xdg_toplevel.title) |t| std.mem.span(t) else "";
-            const app_id = if (toplevel.xdg_toplevel.app_id) |a| std.mem.span(a) else "";
-            const workspace_id = if (toplevel.workspace) |ws| ws.id else 0;
-            std.fmt.format(event_payload.writer(), "{{\"title\":\"{s}\",\"app_id\":\"{s}\",\"workspace_id\":{d}}}", .{title, app_id, workspace_id}) catch {};
-            ipc_server.broadcastEvent(toplevel.server, .event_openwindow, event_payload.items);
-        }
     }
     
     // Helper function to check if toplevel is already in the server's list
@@ -224,11 +201,6 @@ pub const Toplevel = struct {
             toplevel.server.master_toplevel = null;
         }
 
-        // Remove request_move and request_resize listeners to prevent assertion failure
-        // These are removed during unmap because they're XDG toplevel events that should not persist
-        toplevel.request_move.link.remove();
-        toplevel.request_resize.link.remove();
-
         // Remove from workspace
         if (toplevel.workspace) |workspace| {
             workspace.removeToplevel(toplevel);
@@ -242,6 +214,12 @@ pub const Toplevel = struct {
         } else {
             std.log.info("Toplevel was not in server list, skipping removal", .{});
         }
+
+        // Remove the xdg_toplevel specific listeners here (before destroy)
+        // This prevents the assertion failure in wlroots destroy_xdg_toplevel
+        std.log.info("Removing xdg_toplevel event listeners", .{});
+        toplevel.request_move.link.remove();
+        toplevel.request_resize.link.remove();
 
         // Rearrange remaining windows
         toplevel.server.arrangeWindows();
@@ -271,61 +249,16 @@ pub const Toplevel = struct {
 
         std.log.info("Removing remaining event listeners for toplevel {*}", .{ toplevel });
 
-        // Note: decoration listeners are cleaned up in handleDestroyDecoration, not here
-
-        // Remove XDG toplevel specific event listeners (request_move and request_resize)
-        // These were added to the xdg_toplevel's internal event lists in server.zig
-        // Note: These are already removed in handleUnmap, so we check if they're still in a list
-        if (toplevel.request_move.link.prev != null and toplevel.request_move.link.next != null) {
-            std.log.info("Removing request_move listener from xdg_toplevel internal event list for toplevel {*}", .{ toplevel });
-            toplevel.request_move.link.remove();
-        } else {
-            std.log.info("request_move listener was already removed from toplevel {*}", .{ toplevel });
-        }
-
-        if (toplevel.request_resize.link.prev != null and toplevel.request_resize.link.next != null) {
-            std.log.info("Removing request_resize listener from xdg_toplevel internal event list for toplevel {*}", .{ toplevel });
-            toplevel.request_resize.link.remove();
-        } else {
-            std.log.info("request_resize listener was already removed from toplevel {*}", .{ toplevel });
-        }
-
-        // Remove XDG surface specific event listeners (commit, map, unmap)
-        if (toplevel.commit.link.next != &toplevel.commit.link or
-            toplevel.commit.link.prev != &toplevel.commit.link) {
-            toplevel.commit.link.remove();
-        } else {
-            std.log.info("commit listener was already removed from toplevel {*}", .{ toplevel });
-        }
-
-        if (toplevel.map.link.next != &toplevel.map.link or
-            toplevel.map.link.prev != &toplevel.map.link) {
-            toplevel.map.link.remove();
-        } else {
-            std.log.info("map listener was already removed from toplevel {*}", .{ toplevel });
-        }
-
-        if (toplevel.unmap.link.next != &toplevel.unmap.link or
-            toplevel.unmap.link.prev != &toplevel.unmap.link) {
-            toplevel.unmap.link.remove();
-        } else {
-            std.log.info("unmap listener was already removed from toplevel {*}", .{ toplevel });
-        }
-
-        // Remove the destroy listener - wlroots expects the listener list to be empty before destroying the surface
-        // Even though this listener is the one that triggered this function, we still need to remove it
-        if (toplevel.destroy.link.prev != null and toplevel.destroy.link.next != null) {
-            std.log.info("Removing destroy listener from toplevel {*}", .{ toplevel });
-            toplevel.destroy.link.remove();
-        }
+        // Remove the listener objects from their respective signal lists
+        // Note: request_move and request_resize are already removed in handleUnmap
+        toplevel.commit.link.remove();
+        toplevel.map.link.remove();
+        toplevel.unmap.link.remove();
+        toplevel.destroy.link.remove();
 
         // Null out the scene tree data to prevent use-after-free when cursor hovers over destroyed window
         std.log.info("Nulling scene tree data for toplevel {*}", .{ toplevel });
         toplevel.scene_tree.node.data = null;
-
-        // Destroy popup tree
-        std.log.info("Destroying popup tree for toplevel {*}", .{ toplevel });
-        toplevel.popup_tree.node.destroy();
 
         // Destroy border container to clean up ghost borders
         std.log.info("Destroying border container for toplevel {*}", .{ toplevel });
@@ -369,38 +302,5 @@ pub const Toplevel = struct {
         server.grab_box = box;
         server.grab_box.x += toplevel.x;
         server.grab_box.y += toplevel.y;
-    }
-
-    pub fn handleDestroyDecoration(
-        listener: *wl.Listener(*wlr.XdgToplevelDecorationV1),
-        _: *wlr.XdgToplevelDecorationV1,
-    ) void {
-        const toplevel: *Toplevel = @fieldParentPtr("destroy_decoration", listener);
-        std.log.info("Decoration destroyed for toplevel {*}, removing listeners", .{toplevel});
-
-        // Remove the request_mode listener
-        toplevel.request_decoration_mode.link.remove();
-        toplevel.destroy_decoration.link.remove();
-
-        // Clear the decoration pointer
-        toplevel.decoration = null;
-    }
-
-    pub fn handleRequestDecorationMode(
-        listener: *wl.Listener(*wlr.XdgToplevelDecorationV1),
-        decoration: *wlr.XdgToplevelDecorationV1,
-    ) void {
-        const toplevel: *Toplevel = @fieldParentPtr("request_decoration_mode", listener);
-        std.log.info("Decoration mode requested for toplevel {*}, client requested mode: {}, forcing server-side", .{toplevel, decoration.requested_mode});
-
-        // Always force server-side decorations like dwl does - ignore client preferences completely
-        // This is the key difference - dwl unconditionally forces server-side decorations
-        if (toplevel.xdg_toplevel.base.initialized) {
-            _ = decoration.setMode(.server_side);
-            std.log.info("Unconditionally forced server-side decoration mode for toplevel {*}", .{toplevel});
-        } else {
-            decoration.scheduled_mode = .server_side;
-            std.log.info("Set scheduled mode to server-side for uninitialized toplevel {*}", .{toplevel});
-        }
     }
 };

@@ -3,15 +3,10 @@
     "position": "top",
     "exclusive": true,
     "height": 20,
-    "modules-left": ["sway/workspaces", "sway/mode"],
-    "modules-center": ["custom/window"],
+    "modules-left": ["zwm/workspaces"],
+    "modules-center": ["zwm/window"],
     "modules-right": ["clock", "tray"],
-    "custom/window": {
-      "exec": "zwmctl --active-window",
-      "format": "{}",
-      "interval": 1
-    },
     "clock": {
         "format": "{:%I:%M - %A %d/%m/%Y}"
-    },
+    }
 }

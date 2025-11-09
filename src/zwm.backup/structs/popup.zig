@@ -17,7 +17,6 @@ pub const Popup = struct {
     unmap: wl.Listener(void) = .init(handleUnmap),
     destroy: wl.Listener(void) = .init(handleDestroy),
     new_popup: wl.Listener(*wlr.XdgPopup) = .init(handleNewPopup),
-    reposition: wl.Listener(void) = .init(handleReposition),
 
     fn handleCommit(listener: *wl.Listener(*wlr.Surface), _: *wlr.Surface) void {
         const popup: *Popup = @fieldParentPtr("commit", listener);
@@ -84,17 +83,9 @@ pub const Popup = struct {
         xdg_surface.surface.events.map.add(&popup.map);
         xdg_surface.surface.events.unmap.add(&popup.unmap);
         xdg_popup.events.destroy.add(&popup.destroy);
-        xdg_popup.events.reposition.add(&popup.reposition);
         xdg_popup.base.events.new_popup.add(&popup.new_popup);
 
         std.log.info("created nested popup successfully", .{});
-    }
-
-    fn handleReposition(listener: *wl.Listener(void)) void {
-        const popup: *Popup = @fieldParentPtr("reposition", listener);
-        std.log.info("popup reposition requested", .{});
-        // Schedule a configure to acknowledge the reposition request
-        _ = popup.xdg_popup.base.scheduleConfigure();
     }
 
     fn handleDestroy(listener: *wl.Listener(void)) void {
@@ -105,7 +96,6 @@ pub const Popup = struct {
         popup.unmap.link.remove();
         popup.destroy.link.remove();
         popup.new_popup.link.remove();
-        popup.reposition.link.remove();
 
         gpa.destroy(popup);
         std.log.info("popup destroyed", .{});

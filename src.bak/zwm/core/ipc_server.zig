@@ -8,7 +8,6 @@ const ipc_protocol = @import("../ipc/protocol.zig");
 const gpa = std.heap.c_allocator;
 
 pub fn setupIPCServer(server: *Server, _: *wl.EventLoop) !void {
-    // Setup command socket
     const socket_path = try ipc_protocol.getSocketPath(gpa);
     defer gpa.free(socket_path);
 
@@ -27,26 +26,6 @@ pub fn setupIPCServer(server: *Server, _: *wl.EventLoop) !void {
     // Spawn IPC server thread
     const thread = try std.Thread.spawn(.{}, ipcServerThread, .{server});
     thread.detach();
-
-    // Setup event stream socket
-    const event_socket_path = try ipc_protocol.getEventSocketPath(gpa);
-    defer gpa.free(event_socket_path);
-
-    // Remove old socket if it exists
-    std.posix.unlink(event_socket_path) catch {};
-
-    // Create event stream Unix socket
-    const event_address = try net.Address.initUnix(event_socket_path);
-    const event_listener = try event_address.listen(.{
-        .reuse_address = true,
-    });
-
-    server.event_socket = event_listener;
-    std.log.info("Event stream server listening on {s}", .{event_socket_path});
-
-    // Spawn event stream server thread
-    const event_thread = try std.Thread.spawn(.{}, eventStreamThread, .{server});
-    event_thread.detach();
 }
 
 fn ipcServerThread(server: *Server) void {
@@ -222,53 +201,4 @@ fn handleSwitchWorkspace(server: *Server, writer: anytype, payload: []const u8) 
     };
 
     try ipc_protocol.writeMessage(writer, .response_ok, "");
-}
-
-// Event stream thread - accepts new clients and adds them to the list
-fn eventStreamThread(server: *Server) void {
-    while (true) {
-        if (server.event_socket) |*listener| {
-            const client = listener.accept() catch |err| {
-                std.log.err("Failed to accept event stream connection: {}", .{err});
-                continue;
-            };
-
-            // Add client to the list
-            server.event_clients_mutex.lock();
-            defer server.event_clients_mutex.unlock();
-
-            server.event_clients.append(client.stream) catch |err| {
-                std.log.err("Failed to add event client: {}", .{err});
-                client.stream.close();
-                continue;
-            };
-
-            std.log.info("Event stream client connected (total: {})", .{server.event_clients.items.len});
-        } else {
-            break;
-        }
-    }
-}
-
-// Broadcast an event to all connected event stream clients
-pub fn broadcastEvent(server: *Server, event_type: ipc_protocol.MessageType, payload: []const u8) void {
-    server.event_clients_mutex.lock();
-    defer server.event_clients_mutex.unlock();
-
-    var i: usize = 0;
-    while (i < server.event_clients.items.len) {
-        const client = server.event_clients.items[i];
-        const writer = client.writer();
-
-        // Try to send the event
-        ipc_protocol.writeMessage(writer, event_type, payload) catch {
-            // Client disconnected or error - remove it
-            std.log.info("Event client disconnected", .{});
-            client.close();
-            _ = server.event_clients.orderedRemove(i);
-            continue;
-        };
-
-        i += 1;
-    }
 }
