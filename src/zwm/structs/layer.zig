@@ -4,4 +4,5 @@ pub const Layer = enum {
     app,
     top,
     overlay,
+    popups,  // Dedicated layer for all popups, above everything else
 };

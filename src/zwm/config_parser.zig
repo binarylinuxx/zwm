@@ -143,6 +143,9 @@ pub const Config = struct {
     spring_frequency: f32,
     spring_damping_ratio: f32,
 
+    // Debug settings
+    debug_logs: bool,
+
     // Keybindings and commands
     keybinds: std.ArrayList(KeyBind),
     commands: std.ArrayList(Command),
@@ -408,6 +411,7 @@ pub fn loadConfig(allocator: std.mem.Allocator, config_path: []const u8) !Config
         .animation_duration = 400,
         .spring_frequency = 6.0,
         .spring_damping_ratio = 1.0,
+        .debug_logs = false,
         .keybinds = std.ArrayList(KeyBind).init(allocator),
         .commands = std.ArrayList(Command).init(allocator),
         .xkb_layout = null,
@@ -451,6 +455,8 @@ pub fn loadConfig(allocator: std.mem.Allocator, config_path: []const u8) !Config
             try parseEnvironmentNode(node, &config, allocator);
         } else if (std.mem.eql(u8, node.name, "commands")) {
             try parseCommandsNode(node, &config, allocator);
+        } else if (std.mem.eql(u8, node.name, "debug")) {
+            try parseDebugNode(node, &config);
         }
     }
 
@@ -653,6 +659,17 @@ fn parseCommandsNode(node: *const simple_kdl.Node, config: *Config, allocator: s
                 .name = try allocator.dupe(u8, child.name),
                 .cmd = try allocator.dupe(u8, cmd),
             });
+        }
+    }
+}
+
+// Parse debug node
+fn parseDebugNode(node: *const simple_kdl.Node, config: *Config) !void {
+    for (node.children.items) |*child| {
+        if (std.mem.eql(u8, child.name, "enable-logs")) {
+            if (child.getArg(0)) |arg| {
+                config.debug_logs = std.mem.eql(u8, arg, "true");
+            }
         }
     }
 }

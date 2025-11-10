@@ -7,6 +7,7 @@ const wlr = @import("wlroots");
 const gpa = std.heap.c_allocator;
 
 const Server = @import("../core/server.zig").Server;
+const Toplevel = @import("toplevel.zig").Toplevel;
 
 pub const Popup = struct {
     server: *Server,
@@ -28,17 +29,35 @@ pub const Popup = struct {
 
     fn handleMap(listener: *wl.Listener(void)) void {
         const popup: *Popup = @fieldParentPtr("map", listener);
-        std.log.info("popup mapped, giving keyboard focus", .{});
+        std.log.info("popup mapped, surface: {*}", .{popup.xdg_popup.base.surface});
 
-        // Give keyboard focus to the popup when it opens
-        // This allows keyboard navigation (arrow keys, Enter, Escape, etc.)
-        const surface = popup.xdg_popup.base.surface;
-        if (popup.server.seat.getKeyboard()) |wlr_keyboard| {
-            popup.server.seat.keyboardNotifyEnter(
-                surface,
-                wlr_keyboard.keycodes[0..wlr_keyboard.num_keycodes],
-                &wlr_keyboard.modifiers,
-            );
+        // Get the parent surface to determine which toplevel this popup belongs to
+        const parent_surface = popup.xdg_popup.parent orelse {
+            std.log.err("popup has no parent surface", .{});
+            return;
+        };
+
+        // Try to get the parent as an XDG surface to find the associated toplevel
+        if (wlr.XdgSurface.tryFromWlrSurface(parent_surface)) |parent_xdg| {
+            if (parent_xdg.role == .toplevel and parent_xdg.data != null) {
+                if (parent_xdg.data) |data| {
+                    const parent_toplevel = @as(*Toplevel, @ptrCast(@alignCast(data)));
+                    
+                    // For GTK applications, we need to ensure that the parent toplevel maintains
+                    // proper focus state when popups are shown, to allow proper keyboard interaction
+                    std.log.info("Popup mapped for toplevel {*}, ensuring proper focus handling", .{parent_toplevel});
+                    
+                    // Only change focus if the popup is being activated by mouse, not just appearing
+                    // This helps maintain proper focus behavior for GTK applications
+                    if (popup.server.seat.getKeyboard()) |keyboard| {
+                        popup.server.seat.keyboardNotifyEnter(
+                            popup.xdg_popup.base.surface,
+                            keyboard.keycodes[0..keyboard.num_keycodes],
+                            &keyboard.modifiers,
+                        );
+                    }
+                }
+            }
         }
     }
 

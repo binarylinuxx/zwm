@@ -69,7 +69,14 @@ pub const LayerSurface = struct {
         // Update exclusive zone information from pending state
         const pending = layer_surface.layer_surface.pending;
         layer_surface.exclusive_zone.zone = pending.exclusive_zone;
-        layer_surface.exclusive_zone.anchor = @as(u32, @bitCast(pending.anchor));
+
+        // Construct anchor value from individual flags with correct bit positions
+        layer_surface.exclusive_zone.anchor =
+            (@as(u32, if (pending.anchor.top) 1 else 0)) |
+            (@as(u32, if (pending.anchor.bottom) 2 else 0)) |
+            (@as(u32, if (pending.anchor.left) 4 else 0)) |
+            (@as(u32, if (pending.anchor.right) 8 else 0));
+
         layer_surface.exclusive_zone.margin_top = pending.margin.top;
         layer_surface.exclusive_zone.margin_right = pending.margin.right;
         layer_surface.exclusive_zone.margin_bottom = pending.margin.bottom;

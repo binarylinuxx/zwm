@@ -13,8 +13,47 @@ const gpa = std.heap.c_allocator;
 const Server = @import("core/server.zig").Server;
 const config_parser = @import("config_parser.zig");
 
+// Global debug flag
+pub var debug_logs_enabled: bool = false;
+
+// Override log level based on debug flag
+pub const std_options: std.Options = .{
+    .logFn = customLogFn,
+};
+
+fn customLogFn(
+    comptime level: std.log.Level,
+    comptime scope: @TypeOf(.EnumLiteral),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    // Only allow info/debug logs if debug is enabled
+    // Always allow warn/err logs
+    if (level == .info or level == .debug) {
+        if (!debug_logs_enabled) return;
+    }
+
+    // Use the default log function
+    std.log.defaultLog(level, scope, format, args);
+}
+
 pub fn main() anyerror!void {
     wlr.log.init(.debug, null);
+
+    // Parse command line arguments
+    var startup_command: ?[]const u8 = null;
+    var i: usize = 1;
+    while (i < std.os.argv.len) : (i += 1) {
+        const arg = std.mem.span(std.os.argv[i]);
+        if (std.mem.eql(u8, arg, "--debug") or std.mem.eql(u8, arg, "-d")) {
+            debug_logs_enabled = true;
+        } else {
+            // First non-flag argument is the startup command
+            if (startup_command == null) {
+                startup_command = arg;
+            }
+        }
+    }
 
     // Redirect logs to file
     const log_file = std.fs.cwd().createFile("log.log", .{ .read = true }) catch |err| {
@@ -36,6 +75,11 @@ pub fn main() anyerror!void {
     const config = try config_parser.loadConfig(gpa, config_path);
     std.log.info("Loaded configuration from {s}", .{config_path});
 
+    // Override debug flag from config if command line flag was provided
+    if (!debug_logs_enabled) {
+        debug_logs_enabled = config.debug_logs;
+    }
+
     var server: Server = undefined;
     try server.init(config);
     defer server.deinit();
@@ -45,8 +89,7 @@ pub fn main() anyerror!void {
     server.wayland_display = try gpa.dupe(u8, socket);
     std.log.info("Created Wayland socket: {s}", .{socket});
 
-    if (std.os.argv.len >= 2) {
-        const cmd = std.mem.span(std.os.argv[1]);
+    if (startup_command) |cmd| {
         var child = std.process.Child.init(&[_][]const u8{ "/bin/sh", "-c", cmd }, gpa);
         var env_map = try std.process.getEnvMap(gpa);
         defer env_map.deinit();

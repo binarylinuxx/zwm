@@ -23,6 +23,7 @@ always seen those eye candy compositors and they always uses C/++ and im decided
 - [x] Window Rounding (SceneFX integration with buffer-level corner radius)
 - [x] Custom renderer for FX effects via Shaders (infrastructure ready)
 - [x] Blur effect (backdrop blur on windows with scene-level parameters)
+- Fix Popups at gtk apps for qt they seems work fine
 - Fix Some bugs (appear to be permanent by develop progress)
 - Advanced rounded corners with clipping regions for borders
 - More tiling layouts (floating, monocle, etc.)
@@ -41,16 +42,25 @@ always seen those eye candy compositors and they always uses C/++ and im decided
 *requirements:*
 - zig 0.14.1 you probably would get it from https://ziglang.org/download/
 - pkg-config
-- make
+- make or meson/ninja (choose one build system)
 - wlroots 0.19
 - SceneFX 0.4.1
 
-*build:*
+*build with Make:*
 ```
 git clone https://codeberg.org/blx/zwm
 cd zwm
 make build
 sudo make install # optional if you want install zwm to path
+```
+
+*build with Meson:*
+```
+git clone https://codeberg.org/blx/zwm
+cd zwm
+meson setup build
+ninja -C build
+sudo ninja -C build install # optional if you want install zwm to path
 ```
 
 # Config

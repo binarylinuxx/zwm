@@ -61,9 +61,13 @@ pub const Toplevel = struct {
         // Update border container position to match the toplevel
         toplevel.border_container.node.setPosition(x - border_width, y - border_width);
 
-        // Update popup_tree position to match the toplevel (for correct hit testing)
-        toplevel.popup_tree.node.setPosition(x, y);
-        std.log.debug("updateBorder: Positioned popup_tree at ({d}, {d})", .{x, y});
+        // Update popup_tree position to account for XDG geometry offset
+        // Popups are positioned relative to the surface geometry, not the window position
+        // CSD windows (with shadows) have geometry.x/y offsets we need to account for
+        const geometry = toplevel.xdg_toplevel.base.current.geometry;
+        toplevel.popup_tree.node.setPosition(x + geometry.x, y + geometry.y);
+        std.log.debug("updateBorder: Positioned popup_tree at ({d}, {d}) with geometry offset ({d}, {d})",
+            .{x + geometry.x, y + geometry.y, geometry.x, geometry.y});
 
         // Create a single border frame rectangle that encompasses the full border area
         // Size: window size + 2*border_width in each dimension
@@ -121,7 +125,10 @@ pub const Toplevel = struct {
         // Make sure the border container and popup_tree are positioned correctly when the window is mapped
         const border_width = toplevel.server.config.border_width;
         toplevel.border_container.node.setPosition(toplevel.x - border_width, toplevel.y - border_width);
-        toplevel.popup_tree.node.setPosition(toplevel.x, toplevel.y);
+
+        // Position popup_tree accounting for geometry offset
+        const geometry = toplevel.xdg_toplevel.base.current.geometry;
+        toplevel.popup_tree.node.setPosition(toplevel.x + geometry.x, toplevel.y + geometry.y);
 
         // Apply corner radius to the window surface
         toplevel.applyWindowCornerRadius();
