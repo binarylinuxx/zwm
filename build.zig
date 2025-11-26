@@ -70,7 +70,7 @@ pub fn build(b: *std.Build) void {
     zwm.root_module.addImport("kdl", kdl);
     zwm.linkSystemLibrary("glesv2");
     zwm.linkSystemLibrary("scenefx-0.4");
-    zwm.addIncludePath(.{ .cwd_relative = "/usr/include/scenefx-0.4" });
+    zwm.addIncludePath(b.path("include"));
 
     zwm.linkSystemLibrary("wayland-server");
     zwm.linkSystemLibrary("xkbcommon");
